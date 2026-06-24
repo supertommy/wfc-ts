@@ -60,13 +60,27 @@ candidates the new hottest stage reveals.
 
 ## Speedup target
 
-**TBD** — set after ≥2 measured hypotheses, grounded in the profile, stated as
-an engineer's estimate (not a proven ceiling). Candidate inputs to inform it:
-H1 already gives ~1.2x; if H2 adds ~1.3-1.5x on propagation-bound inputs and H4
-takes the scan-bound input toward O(log n), an aggregate ~3-5x is plausibly
-reachable. Record the chosen target here when set:
+Set after H1 + H2 measured (2 hypotheses), grounded in the profile. The two
+regimes have different ceilings, so the target is per-input, all must hold with
+VALID+DET:
 
-`target: <set after H2/H4>`
+- **knots-standard-48 ≥ 3x** — the scan-bound input (83% in the entropy scan).
+  H1+H2 give ~1.3x here; the binding win is H4's heap taking the scan toward
+  O(log n). 3x is an engineer's estimate, not a proven ceiling.
+- **circuit-turnless-34 ≥ 1.4x** — propagation-bound; already met by H1+H2 (~1.4x).
+  H4 may add a little from circuit's 24% scan. The bar is "hold the propagation
+  gains, don't regress."
+- **rooms-30 ≥ 1.5x** — propagation-bound; already met by H1+H2 (~1.6x). Hold.
+
+So the binding target is really H4 delivering the scan win on knots-48 without
+losing the propagation gains on circuit/rooms. Reached when all three bars are
+met with VALID+DET passing on the committed state.
+
+Additional exit authority (from the user): the loop may also stop when, after
+re-profiling, no high-payoff optimization remains, OR the optimized surpasses
+all known external benchmarks (kchapelier / blazinwfc / lite-wfc) — the latter
+requires the benchmarks/external/ harness, built when the optimization is far
+enough along to evaluate that bar (likely right after H4).
 
 ## Exit criteria (the orchestrator checks each loop turn)
 
