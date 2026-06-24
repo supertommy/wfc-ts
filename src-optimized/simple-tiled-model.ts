@@ -160,10 +160,11 @@ export class SimpleTiledModel extends Model {
       }
     }
 
-    // Sparse propagator: propagator[d][t1] = list of allowed t2.
-    const propagator: number[][][] = [];
+    // Sparse propagator (H2 CSR flat): build lists to preserve warn + exact order,
+    // then flatten to propData / propStart / propLen. Indexed d*T + t1.
+    // Same concatenation order over (d,t1) and within each list => byte-identical.
+    const propLists: number[][] = [];
     for (let d = 0; d < 4; d++) {
-      const dir: number[][] = [];
       for (let t1 = 0; t1 < T; t1++) {
         const list: number[] = [];
         const row = dense[d][t1];
@@ -172,11 +173,26 @@ export class SimpleTiledModel extends Model {
         if (list.length === 0) {
           console.warn(`WARNING: tile ${tilenames[t1]} has no neighbors in direction ${d}`);
         }
-        dir.push(list);
+        propLists.push(list);
       }
-      propagator.push(dir);
     }
-    this.propagator = propagator;
+    const PT = 4 * T;
+    let total = 0;
+    for (let k = 0; k < PT; k++) total += propLists[k].length;
+    const propData = new Int32Array(total);
+    const propStart = new Int32Array(PT);
+    const propLen = new Int32Array(PT);
+    let pos = 0;
+    for (let k = 0; k < PT; k++) {
+      const lst = propLists[k];
+      propStart[k] = pos;
+      propLen[k] = lst.length;
+      for (let i = 0; i < lst.length; i++) propData[pos + i] = lst[i];
+      pos += lst.length;
+    }
+    this.propData = propData;
+    this.propStart = propStart;
+    this.propLen = propLen;
   }
 
   /** Debug grid of resolved tile-variant names. Empty where unresolved. */

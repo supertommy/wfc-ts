@@ -18,6 +18,15 @@
 //   cache locality + zero object indirection in the inner loop. (Mike Acton
 //   DOD: indices over references, SoA over AoS, data layout as first-class.)
 //
+// HYPOTHESIS 2 (this iteration): flatten `propagator` to flat CSR typed arrays.
+//
+//   propagator[d][t1] was a number[][] list of allowed t2. In propagate() hot
+//   path and in clear() .length checks we chased two array objects per access.
+//   CSR layout: one Int32Array propData (concat all lists, d then t1 order),
+//   plus propStart/propLen indexed by (d*T + t1). Build once in ctor (untimed).
+//   Same lists + same iteration order over t2 => byte-identical outputs.
+//   Targets propagation-bound inputs (circuit/rooms). Pure layout, Tier-1.
+//
 // PRNG: mulberry32, same as the reference (deterministic contract).
 
 import { mulberry32, type Random } from "./prng.js";
@@ -44,7 +53,11 @@ export abstract class Model {
 
   // Flattened wave: wave[i*T + t] is 1 while variant t is still possible at cell i.
   protected wave: Uint8Array = new Uint8Array(0);
-  protected propagator: number[][][] = [];
+  // Flattened propagator (CSR): propData concatenated lists (d outer, t1 inner),
+  // propStart/propLen indexed d*T + t1. Same order as old lists => byte-id.
+  protected propData: Int32Array = new Int32Array(0);
+  protected propStart: Int32Array = new Int32Array(0);
+  protected propLen: Int32Array = new Int32Array(0);
   // Flattened AC-4 support counts: compatible[i*T4 + t*4 + d]. Hits 0 => ban.
   protected compatible: Int32Array = new Int32Array(0);
   protected observed: Int32Array = new Int32Array(0);
@@ -187,7 +200,7 @@ export abstract class Model {
   }
 
   private propagate(): boolean {
-    const { propagator, compatible, stackI, stackT, MX, MY, N, periodic, T4 } = this;
+    const { propData, propStart, propLen, compatible, stackI, stackT, MX, MY, N, periodic, T4, T } = this;
     while (this.stacksize > 0) {
       this.stacksize--;
       const i1 = stackI[this.stacksize];
@@ -207,11 +220,13 @@ export abstract class Model {
         else if (y2 >= MY) y2 -= MY;
 
         const i2 = x2 + y2 * MX;
-        const p = propagator[d][t1];
+        const key = d * T + t1;
+        const start = propStart[key];
+        const len = propLen[key];
         const base2 = i2 * T4;
 
-        for (let l = 0; l < p.length; l++) {
-          const t2 = p[l];
+        for (let l = 0; l < len; l++) {
+          const t2 = propData[start + l];
           const cidx = base2 + t2 * 4 + d;
           if (--compatible[cidx] === 0) this.ban(i2, t2);
         }
@@ -242,7 +257,7 @@ export abstract class Model {
   }
 
   protected clear(): void {
-    const { wave, compatible, propagator, weights, T, T4, count } = this;
+    const { wave, compatible, propStart, propLen, weights, T, T4, count } = this;
 
     for (let i = 0; i < count; i++) {
       const wbase = i * T;
@@ -252,10 +267,10 @@ export abstract class Model {
         // support count = how many patterns the opposite-direction neighbor
         // lists as compatible with t (i.e. patterns that can sit on the d side).
         const ct = cbase + t * 4;
-        compatible[ct] = propagator[OPPOSITE[0]][t].length;
-        compatible[ct + 1] = propagator[OPPOSITE[1]][t].length;
-        compatible[ct + 2] = propagator[OPPOSITE[2]][t].length;
-        compatible[ct + 3] = propagator[OPPOSITE[3]][t].length;
+        compatible[ct] = propLen[OPPOSITE[0] * T + t];
+        compatible[ct + 1] = propLen[OPPOSITE[1] * T + t];
+        compatible[ct + 2] = propLen[OPPOSITE[2] * T + t];
+        compatible[ct + 3] = propLen[OPPOSITE[3] * T + t];
       }
 
       this.sumsOfOnes[i] = weights.length;
@@ -276,10 +291,10 @@ export abstract class Model {
         const i = x + y * MX;
         const wbase = i * T;
         for (let t = 0; t < T; t++) {
-          const noRight = (periodic || x < MX - N) && propagator[2][t].length === 0;
-          const noTop = (periodic || y > 0) && propagator[3][t].length === 0;
-          const noLeft = (periodic || x > 0) && propagator[0][t].length === 0;
-          const noBottom = (periodic || y < MY - N) && propagator[1][t].length === 0;
+          const noRight = (periodic || x < MX - N) && propLen[2 * T + t] === 0;
+          const noTop = (periodic || y > 0) && propLen[3 * T + t] === 0;
+          const noLeft = (periodic || x > 0) && propLen[0 * T + t] === 0;
+          const noBottom = (periodic || y < MY - N) && propLen[1 * T + t] === 0;
 
           if (noRight || noTop || noLeft || noBottom) this.ban(i, t);
         }
