@@ -37,7 +37,7 @@ informational. See `prompts/optimize-one.md`.
 | # | candidate | tier | targets | status | result |
 |---|-----------|------|---------|--------|--------|
 | H1 | flatten wave + compatible to typed arrays (SoA) | 1 (byte-id) | propagation + scan reads | KEPT | 1.27/1.17/1.19x on knots-48/circuit/rooms |
-| H2 | flatten propagator to flat CSR typed arrays | 1 (byte-id) | propagation (circuit/rooms) | TODO | — |
+| H2 | flatten propagator to flat CSR typed arrays | 1 (byte-id) | propagation (circuit/rooms) | KEPT | 1.40/1.59x on circuit/rooms (prop-bound targets; +~16-20% over H1); knots within noise |
 | H4 | heap-based entropy selection (O(log n) extract-min + decrease-key) | 2 (valid+det) | scan (knots-48, 83%) | TODO | — |
 
 H3 (an index-ordered active-cell bitset to trim the scan) is **deliberately

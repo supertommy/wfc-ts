@@ -64,3 +64,36 @@ remain; this hypothesis is also an *enabling transform* (flat arrays unlock
 further layout/vectorization ideas).
 
 **Cost:** ~1 LLM turn + a few seconds shell (typecheck + prove-harness).
+
+## Hypothesis 2 — flatten propagator to flat CSR typed arrays [KEPT]
+
+**Hypothesis:** The remaining indirection in the propagation hot loop on
+propagation-bound inputs (circuit/rooms) is `const p = propagator[d][t1]; for (l)
+ t2 = p[l]`. Replace the `number[][][]` with a flat CSR layout
+(`Int32Array propData` of concatenated lists + `propStart`/`propLen` indexed
+`d*T + t1`) built at ctor end. Same list contents and iteration order over t2
+=> outputs are byte-identical (Tier-1). Pure data-layout change; no algorithm
+change.
+
+**Change:** `src-optimized/model.ts` (update accesses in `propagate()` and `clear()`;
+add CSR fields + H2 comment) and `src-optimized/simple-tiled-model.ts` (build
+CSR at end of ctor instead of jagged arrays; same order preserved).
+
+**Measurement (median-of-5, prove-harness; grounding run before change for pre-opt):**
+
+| input | ref ms | opt ms | speedup | valid | det | byte-identical |
+|-------|--------|--------|---------|-------|-----|----------------|
+| knots-standard-48 | 10.96 | 8.41 | 1.30x | VALID | DET | yes |
+| circuit-turnless-34 | 7.42 | 5.31 | 1.40x | VALID | DET | yes |
+| rooms-30 | 3.83 | 2.41 | 1.59x | VALID | DET | yes |
+
+Pre-H2 optMs (grounding run): knots 8.26 / circuit 6.34 / rooms 2.73. H2 improved
+opt on circuit (6.34→5.31) and rooms (2.73→2.41); knots within noise.
+
+**Decision:** KEEP. Gates pass (VALID+DET, and compare* PASS as expected for
+layout-only). Measurably faster on the two propagation-bound targets
+(circuit/rooms); no regression on scan-bound. Pure simplification of access
+pattern (removes 2 array indirections per inner iter). Enables further
+propagator work if any.
+
+**Cost:** ~1 LLM turn + ~30s wall (ground run + edit + typecheck + 2x harness runs + commit + log).
