@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+              // noUncheckedIndexedAccess is deliberately OFF. The WFC algorithm
+              // indexes arrays throughout with invariants it maintains by
+              // construction (e.g. wave[i] is valid for every i < wave.length).
+              // Forcing a possibly-undefined check at every index would either
+              // add defensive branches that pollute the measured baseline, or
+              // demand a forest of `!` assertions that pretend we verified
+              // something we didn't. The correctness gate for this codebase is
+              // the test harness — which validates every adjacency constraint —
+              // not the type checker's index bounds. strict stays ON to catch
+              // real bugs (null refs, type errors, unused vars).
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src", "test", "performance-test", "benchmarks", "scripts"]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "wfc-ts",
+  "version": "0.1.0",
+  "description": "Wave Function Collapse (simple tiled model) in TypeScript — a reference implementation optimized via the Mike Acton ratchet technique.",
+  "type": "module",
+  "license": "MIT",
+  "author": "tommyato",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tommyato/wfc-ts.git"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "bun run performance-test/measure.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0",
+    "@types/bun": "^1.2.0"
+  }
+}

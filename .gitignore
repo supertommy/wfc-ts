@@ -1,0 +1,20 @@
+node_modules/
+*.tsbuildinfo
+dist/
+.DS_Store
+
+# Reference repos live in ../references/ (sibling), never committed.
+# Guard against accidental clones landing inside this repo.
+/fast-wfc/
+/three-wfc/
+/wavefunctioncollapse/
+/WaveFunctionCollapse/
+/kchapelier-wfc/
+/blazinwfc/
+/lite-wfc/
+/references/
+
+# Benchmark output
+performance-test/results.txt
+performance-test-optimized/results.txt
+*.baseline.bin
