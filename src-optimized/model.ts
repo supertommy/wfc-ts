@@ -18,7 +18,7 @@
 //   cache locality + zero object indirection in the inner loop. (Mike Acton
 //   DOD: indices over references, SoA over AoS, data layout as first-class.)
 //
-// HYPOTHESIS 2 (this iteration): flatten `propagator` to flat CSR typed arrays.
+// HYPOTHESIS 2 (kept): flatten `propagator` to flat CSR typed arrays.
 //
 //   propagator[d][t1] was a number[][] list of allowed t2. In propagate() hot
 //   path and in clear() .length checks we chased two array objects per access.
@@ -27,9 +27,22 @@
 //   Same lists + same iteration order over t2 => byte-identical outputs.
 //   Targets propagation-bound inputs (circuit/rooms). Pure layout, Tier-1.
 //
+// HYPOTHESIS 4 (this iteration): heap-based entropy selection (O(log n) extract-min).
+//
+//   Replace the O(cells) full-grid scan in nextUnobservedNode (83% on knots-48)
+//   with a binary min-heap (typed arrays + keyToPos) over unobserved cells.
+//   Key = entropies[i] (or sumsOfOnes for MRV); deterministic tie-break by
+//   smaller cell index on equal priority. NO noise in selection (PRNG used only
+//   in observe's weightedPick). init/clear build heap; ban does decrease-key or
+//   remove on collapse. nextUnobserved uses lazy delete for any stale pops.
+//   Tier-2 (algorithmic): changes collapse ORDER, so compare* FAIL is EXPECTED
+//   and not a regression; gate is only VALID + DET. Ported pattern from
+//   references/three-wfc/lib/WFCMinHeap.ts .
+//
 // PRNG: mulberry32, same as the reference (deterministic contract).
 
 import { mulberry32, type Random } from "./prng.js";
+import { EntropyHeap } from "./entropy-heap.js";
 
 export const enum Heuristic {
   Entropy = 0,
@@ -76,6 +89,10 @@ export abstract class Model {
   protected sumsOfWeightLogWeights: Float64Array = new Float64Array(0);
   protected entropies: Float64Array = new Float64Array(0);
 
+  // H4 heap for O(log n) selection of next cell to observe (Entropy/MRV).
+  // Rebuilt in clear(); updated via ban().
+  protected entropyHeap: EntropyHeap | null = null;
+
   protected sumOfWeights = 0;
   protected sumOfWeightLogWeights = 0;
   protected startingEntropy = 0;
@@ -120,6 +137,8 @@ export abstract class Model {
     this.sumsOfWeightLogWeights = new Float64Array(count);
     this.entropies = new Float64Array(count);
 
+    this.entropyHeap = new EntropyHeap(count);
+
     const stackCap = count * T;
     this.stackI = new Int32Array(stackCap);
     this.stackT = new Int32Array(stackCap);
@@ -158,11 +177,11 @@ export abstract class Model {
   }
 
   private nextUnobservedNode(random: Random): number {
-    const { count, sumsOfOnes, entropies, MX, MY, N, periodic, heuristic } = this;
+    const { heuristic } = this;
     if (heuristic === Heuristic.Scanline) {
-      for (let i = this.observedSoFar; i < count; i++) {
-        if (!periodic && (i % MX + N > MX || ((i / MX) | 0) + N > MY)) continue;
-        if (sumsOfOnes[i] > 1) {
+      for (let i = this.observedSoFar; i < this.count; i++) {
+        if (!this.periodic && (i % this.MX + this.N > this.MX || ((i / this.MX) | 0) + this.N > this.MY)) continue;
+        if (this.sumsOfOnes[i] > 1) {
           this.observedSoFar = i + 1;
           return i;
         }
@@ -170,21 +189,22 @@ export abstract class Model {
       return -1;
     }
 
-    let min = 1e4;
-    let argmin = -1;
-    for (let i = 0; i < count; i++) {
-      if (!periodic && (i % MX + N > MX || ((i / MX) | 0) + N > MY)) continue;
-      const remainingValues = sumsOfOnes[i];
-      const entropy = heuristic === Heuristic.Entropy ? entropies[i] : remainingValues;
-      if (remainingValues > 1 && entropy <= min) {
-        const noise = 1e-6 * random.nextDouble();
-        if (entropy + noise < min) {
-          min = entropy + noise;
-          argmin = i;
-        }
-      }
+    // H4: O(log n) via heap. Lazy deletion for collapsed/stale entries.
+    // Deterministic: no noise; on equal priority, lower cell index wins.
+    // (PRNG is no longer consumed here; only in observe weightedPick.)
+    const heap = this.entropyHeap;
+    if (!heap) return -1;
+    const { sumsOfOnes, entropies } = this;
+    while (!heap.isEmpty()) {
+      const entry = heap.popEntry();
+      if (!entry) break;
+      const i = entry.key;
+      if (sumsOfOnes[i] <= 1) continue;
+      const currPrio = heuristic === Heuristic.Entropy ? entropies[i] : sumsOfOnes[i];
+      if (entry.entropy !== currPrio) continue; // stale (from prior higher value)
+      return i;
     }
-    return argmin;
+    return -1;
   }
 
   private observe(node: number, random: Random): void {
@@ -254,6 +274,20 @@ export abstract class Model {
 
     const sum = this.sumsOfWeights[i];
     this.entropies[i] = Math.log(sum) - this.sumsOfWeightLogWeights[i] / sum;
+
+    // H4: on entropy/count change, decrease-key; on collapse to 1 (or 0), remove.
+    // During observe's progressive bans on same cell, intermediate may re-push (harmless).
+    const h = this.entropyHeap;
+    if (h) {
+      if (this.sumsOfOnes[i] <= 1) {
+        h.remove(i);
+      } else {
+        const prio = (this.heuristic === Heuristic.Entropy ? this.entropies[i] : this.sumsOfOnes[i]);
+        if (!h.update(i, prio)) {
+          h.push(i, prio);
+        }
+      }
+    }
   }
 
   protected clear(): void {
@@ -314,6 +348,22 @@ export abstract class Model {
     }
 
     if (this.stacksize > 0) this.propagate();
+
+    // H4: after all initial bans + any propagate from them, build the heap
+    // containing exactly the cells eligible for selection (pass the N-boundary
+    // filter) that still have sumsOfOnes > 1. Uses current entropies (or counts).
+    const h = this.entropyHeap;
+    if (h) {
+      h.clear();
+      const { MX, MY, N, periodic, sumsOfOnes, entropies, heuristic } = this;
+      for (let i = 0; i < this.count; i++) {
+        if (!periodic && (i % MX + N > MX || ((i / MX) | 0) + N > MY)) continue;
+        if (sumsOfOnes[i] > 1) {
+          const prio = heuristic === Heuristic.Entropy ? entropies[i] : sumsOfOnes[i];
+          h.push(i, prio);
+        }
+      }
+    }
   }
 
   result(): Int32Array {
