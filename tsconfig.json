@@ -25,5 +25,5 @@
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "test", "performance-test", "benchmarks", "scripts"]
+  "include": ["src", "test", "performance-test", "benchmarks", "scripts", "harness"]
 }
