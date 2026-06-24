@@ -97,3 +97,46 @@ pattern (removes 2 array indirections per inner iter). Enables further
 propagator work if any.
 
 **Cost:** ~1 LLM turn + ~30s wall (ground run + edit + typecheck + 2x harness runs + commit + log).
+
+## Hypothesis 4 — heap-based entropy selection [KEPT]
+
+**Hypothesis:** The entropy scan in `nextUnobservedNode` is 83.6% of runtime on
+scan-bound input knots-standard-48 (O(cells) per observe step, cells=2304).
+Replace the linear scan + random noise with an O(log n) binary min-heap
+(typed arrays + keyToPos map) over cells with sumsOfOnes>1. Priority=
+entropies[i] (Entropy) or sumsOfOnes[i] (MRV); deterministic min with tie-break
+by lower cell index (no noise). PRNG consumed only inside observe's
+weightedPick. next uses extract-min + lazy discard of collapsed/stale. ban
+wires decrease-key (via update) and remove-on-collapse. Tier-2 algorithmic:
+collapse sequence differs from ref (valid tilings are not unique).
+
+**Change:** Added `src-optimized/entropy-heap.ts` (exact port of
+references/three-wfc/lib/WFCMinHeap.ts with Float64 + deterministic
+(entropy,key) lessThan). Wired in `src-optimized/model.ts`: added heap field
+and allocation in init(); heap rebuild (eligible >1 cells) at end of clear();
+replaced scan in nextUnobservedNode with popEntry + lazy checks; ban now
+updates heap on prio change or removes on <=1. Scanline path untouched.
+Rest of algorithm (flat arrays, CSR prop, ban logic) unchanged.
+
+**Measurement (median-of-5 from prove-harness post-change):**
+
+| input | ref ms | opt ms | speedup | valid | det | compare* |
+|-------|--------|--------|---------|-------|-----|----------|
+| knots-standard-48 | 11.44 | 1.72 | 6.65x | VALID | DET | FAIL (expected) |
+| circuit-turnless-34 | 7.08 | 4.43 | 1.60x | VALID | DET | FAIL (expected) |
+| rooms-30 | 3.02 | 1.86 | 1.62x | VALID | DET | FAIL (expected) |
+
+Pre-H4 opt (H1+H2 state, from grounding run): knots ~8.21ms / circuit ~5.16ms / rooms ~2.36ms.
+H4 delivered ~4.8x additional on knots-48 (8.21→1.72) with no regression on
+prop-bound (in fact small further gains from reduced overhead). The scan cost
+is gone; now propagation dominates even on knots.
+
+**Decision:** KEEP (and committed). VALID + DET gates pass. compare* FAIL is
+EXPECTED and correct for Tier-2 (sequence changed by dropping noise +
+index-tiebreak); not a correctness regression. Massive win on target
+(knots-48, the scan-bound case); also helps others a bit. No correctness
+regression on any input.
+
+**Cost:** ~1 LLM turn + ~2min wall (study three-wfc heap + ground run +
+implement heap+wire + typecheck + 3x harness runs + commit + log + readme).
+Note: no revert needed; first attempt passed gates + speedup.

@@ -38,14 +38,18 @@ informational. See `prompts/optimize-one.md`.
 |---|-----------|------|---------|--------|--------|
 | H1 | flatten wave + compatible to typed arrays (SoA) | 1 (byte-id) | propagation + scan reads | KEPT | 1.27/1.17/1.19x on knots-48/circuit/rooms |
 | H2 | flatten propagator to flat CSR typed arrays | 1 (byte-id) | propagation (circuit/rooms) | KEPT | 1.40/1.59x on circuit/rooms (prop-bound targets; +~16-20% over H1); knots within noise |
-| H4 | heap-based entropy selection (O(log n) extract-min + decrease-key) | 2 (valid+det) | scan (knots-48, 83%) | TODO | — |
+| H4 | heap-based entropy selection (O(log n) extract-min + decrease-key) | 2 (valid+det) | scan (knots-48, 83%) | KEPT | 6.65x on knots-48 (1.72ms vs 11.44); 1.60/1.62x on circuit/rooms; compare* FAIL expected (Tier-2) |
+| H5 | deduplicated propagation worklist (or CSR prop tweaks / zero-alloc) | 1 or 2 | propagation (now dominant post-H4) | TODO | — (candidate suggested by post-H4 profile reasoning) |
 
 H3 (an index-ordered active-cell bitset to trim the scan) is **deliberately
 skipped**: H4's heap replaces the scan entirely, so H3 would be throwaway work.
 If H4 turns out infeasible, H3 becomes the fallback.
 
-After H2 + H4 land, re-profile (`bun run scripts/profile.ts`) and add new
-candidates the new hottest stage reveals.
+H4 landed. Re-profiling the *optimized* (scan cost removed) would be needed to
+find the new dominant (likely propagation); a follow-on candidate (e.g.
+deduped propagation worklist / zero-alloc stack / incremental plogp in ban)
+may emerge as propagation is now relatively larger share. (Run of ref
+profile still shows old hotspots.)
 
 ## Stealable techniques (from references/three-wfc and references/fast-wfc)
 
@@ -54,9 +58,10 @@ candidates the new hottest stage reveals.
   already did the flat support counts; H2 does the flat propagator table.
 - three-wfc (TS, 2025): typed arrays everywhere, **min-heap with key→pos map for
   O(log n) extract-min + decrease-key**, dedup propagation stack, zero allocation
-  in the hot path. Read `references/three-wfc/src/WFCMinHeap.ts` before H4 — it's
-  the exact heap pattern to port. Its tie-breaking is deterministic by cell index
-  (no per-cell PRNG noise), which is valid+det for us.
+  in the hot path. Read `references/three-wfc/lib/WFCMinHeap.ts` before H4 — it's
+  the exact heap pattern to port (note: in lib/ not src/). Its tie-breaking is
+  deterministic by cell index (no per-cell PRNG noise), which is valid+det for us.
+  H4 ported the heap; future candidates may steal the dedup stack or zero-alloc.
 
 ## Speedup target
 
@@ -75,6 +80,10 @@ VALID+DET:
 So the binding target is really H4 delivering the scan win on knots-48 without
 losing the propagation gains on circuit/rooms. Reached when all three bars are
 met with VALID+DET passing on the committed state.
+
+**Post-H4 status:** knots target (3x) surpassed (~6.6x achieved); circuit/rooms
+bars also met (and slightly exceeded). All gates pass. The loop may continue
+if a high-payoff follow-on (e.g. prop work) is identified via re-profile of opt.
 
 Additional exit authority (from the user): the loop may also stop when, after
 re-profiling, no high-payoff optimization remains, OR the optimized surpasses
