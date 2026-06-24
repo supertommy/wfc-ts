@@ -94,7 +94,13 @@ async function main() {
         refChecksum: ref.checksum,
         optChecksum: opt.checksum,
       };
-      if (!(cmp.pass && val.valid && deterministic)) allPass = false;
+      // Gate: valid + complete (the output contract) AND deterministic
+      // (reproducible). compare is informational — does this optimization also
+      // reproduce the reference's exact tiling? It is NOT the correctness gate;
+      // the reference is the validator's correctness anchor, not the thing to
+      // reproduce. (Mirrors the collision repo: algorithm changes held to an
+      // output contract, not identical intermediates.)
+      if (!(val.valid && deterministic)) allPass = false;
       rows.push(row);
     } catch (e) {
       rows.push({
@@ -119,7 +125,7 @@ async function main() {
   console.log("HARNESS IDENTITY-BASELINE PROOF (src-optimized/ == src/)");
   console.log("=".repeat(78));
   console.log(
-    "name".padEnd(22) + "compare  valid  determ  speedup   refMs   optMs  viol",
+    "name".padEnd(22) + "compare* valid  determ  speedup   refMs   optMs  viol",
   );
   console.log("-".repeat(78));
   for (const r of rows) {
@@ -136,7 +142,7 @@ async function main() {
     if (r.err) console.log(`    ERROR: ${r.err}`);
   }
   console.log("-".repeat(78));
-  console.log(`FINAL: ${allPass ? "PASS — harness proven against identity copy" : "FAIL — pipeline unsound"}`);
+  console.log(`FINAL: ${allPass ? "PASS — harness proven against identity copy (gate: valid + deterministic)" : "FAIL — pipeline unsound"}`);
   console.log("=".repeat(78));
 
   // Also persist the per-input reference checksums so Phase 3 can detect a

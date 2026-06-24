@@ -1,15 +1,24 @@
-// Faithful TypeScript port of mxgmn's Model.cs (the WFC observation/propagation
-// core). Copyright (C) 2016 Maxim Gumin, MIT. Ported for wfc-ts.
+// Optimized Model — the WFC observation/propagation core.
+// Copyright (C) 2016 Maxim Gumin, MIT. Faithful port for wfc-ts, then optimized
+// under the ratchet. This is NOT the reference (src/model.ts); it is the
+// optimized solver that the harness measures and gates.
 //
-// This is the REFERENCE implementation: it mirrors mxgmn's data structures
-// (arrays-of-arrays, preallocated propagation stack) and algorithm exactly.
-// The optimized solver in src-optimized/ starts as a verbatim copy of this and
-// is then optimized under the ratchet — every kept change measured against the
-// harness this file anchors.
+// HYPOTHESIS 1 (kept): flatten `wave` and `compatible` to typed arrays (SoA).
 //
-// The one deliberate divergence from C#: the PRNG. mxgmn uses System.Random;
-// we use mulberry32 (see prng.ts), standardized across reference and optimized
-// so identical seed+input yields byte-identical output. That is the match gate.
+//   The reference stored `wave: boolean[][]` and `compatible: number[][][]`
+//   (arrays-of-arrays-of-arrays). The propagation hot loop — the dominant cost
+//   on the larger-T inputs (66-78% on circuit/rooms per the profile) — did
+//   `compatible[i2][t2][d]--`, chasing three JS array objects per access: cache-
+//   hostile and allocation-heavy. This change flattens both into single typed
+//   arrays indexed arithmetically:
+//     wave      -> Uint8Array  of length count*T,        wave[i*T + t]
+//     compatible-> Int32Array of length count*T*4,      compatible[i*T4 + t*4 + d]
+//   Same counts, same decrements, same bans, same selection sequence — so the
+//   output is unchanged (valid AND byte-identical to the reference). The win is
+//   cache locality + zero object indirection in the inner loop. (Mike Acton
+//   DOD: indices over references, SoA over AoS, data layout as first-class.)
+//
+// PRNG: mulberry32, same as the reference (deterministic contract).
 
 import { mulberry32, type Random } from "./prng.js";
 
@@ -19,43 +28,27 @@ export const enum Heuristic {
   Scanline = 2,
 }
 
-// Direction layout, identical to mxgmn:
-//   dx = [-1, 0, 1, 0]   dy = [0, 1, 0, -1]
-//   dir 0 = left (-x), 1 = down (+y), 2 = right (+x), 3 = up (-y)
-//   opposite[d]: 0<->2, 1<->3  => [2, 3, 0, 1]
 const DX = [-1, 0, 1, 0];
 const DY = [0, 1, 0, -1];
 const OPPOSITE = [2, 3, 0, 1];
 
-/**
- * Abstract base for WFC models. SimpleTiledModel (the only model in this
- * project) fills in `propagator`, `weights`, and `T`; everything else — the
- * wave, the AC-4 compatible-counts, the observe/propagate/ban loop — lives here.
- */
 export abstract class Model {
-  // Grid + pattern geometry. MX/MY/N/periodic set by base ctor; T/weights/
-  // propagator set by the subclass before the first run().
   protected MX = 0;
   protected MY = 0;
-  protected T = 0; // pattern (tile-variant) count
-  protected N = 1; // tile footprint; 1 for the simple tiled model
+  protected T = 0;
+  protected T4 = 0; // T*4 — compatible-array stride (per cell)
+  protected count = 0; // MX*MY — number of cells
+  protected N = 1;
   protected periodic = false;
   protected ground = false;
 
-  // The wave: wave[i][t] is true while tile-variant t is still possible at cell i.
-  protected wave: boolean[][] = [];
-  // propagator[d][t1] = list of tile-variants allowed at the dir-d neighbor of a
-  // cell that currently permits t1. Precomputed once from the tileset adjacency.
+  // Flattened wave: wave[i*T + t] is 1 while variant t is still possible at cell i.
+  protected wave: Uint8Array = new Uint8Array(0);
   protected propagator: number[][][] = [];
-  // compatible[i][t][d] = AC-4 support count: how many patterns in the dir-d
-  // neighbor of cell i still permit t. Hits 0 => t is banned at i.
-  protected compatible: number[][][] = [];
+  // Flattened AC-4 support counts: compatible[i*T4 + t*4 + d]. Hits 0 => ban.
+  protected compatible: Int32Array = new Int32Array(0);
   protected observed: Int32Array = new Int32Array(0);
 
-  // Propagation stack of (cellIndex, tileVariant) pairs that need their
-  // neighbors re-checked. Preallocated to MX*MY*T (the worst case). Mirrors
-  // mxgmn's `stack = new (int,int)[wave.Length * T]`; split into two parallel
-  // arrays for a clean TS representation.
   protected stackI: Int32Array = new Int32Array(0);
   protected stackT: Int32Array = new Int32Array(0);
   protected stacksize = 0;
@@ -84,23 +77,16 @@ export abstract class Model {
     this.heuristic = heuristic;
   }
 
-  /**
-   * Allocate the wave, compatible counts, entropy accumulators, and stack.
-   * Called lazily on the first Run. Requires T, weights, propagator to be set
-   * by the subclass first.
-   */
   protected init(): void {
     const count = this.MX * this.MY;
     const T = this.T;
+    const T4 = T * 4;
+    this.count = count;
+    this.T4 = T4;
 
-    this.wave = new Array(count);
-    this.compatible = new Array(count);
-    for (let i = 0; i < count; i++) {
-      this.wave[i] = new Array<boolean>(T).fill(true);
-      const ci: number[][] = new Array(T);
-      for (let t = 0; t < T; t++) ci[t] = [0, 0, 0, 0];
-      this.compatible[i] = ci;
-    }
+    // wave: all 1 (everything possible). compatible: filled by clear().
+    this.wave = new Uint8Array(count * T); // zeroed; clear() sets the valid cells to 1
+    this.compatible = new Int32Array(count * T4);
     this.distribution = new Float64Array(T);
     this.observed = new Int32Array(count);
 
@@ -127,14 +113,8 @@ export abstract class Model {
     this.stacksize = 0;
   }
 
-  /**
-   * Run the observe-propagate loop.
-   * @param seed  PRNG seed (mulberry32). Same seed => same collapse sequence.
-   * @param limit max observe steps; -1 = run to completion (the usual case).
-   * @returns true on success (or limit reached), false on contradiction.
-   */
   run(seed: number, limit: number): boolean {
-    if (this.wave.length === 0) this.init();
+    if (this.count === 0) this.init();
     this.clear();
 
     const random: Random = mulberry32(seed);
@@ -148,11 +128,11 @@ export abstract class Model {
         if (!success) return false;
       } else {
         // No unobserved node remains: every cell has collapsed to one variant.
-        const { wave, T, observed } = this;
-        for (let i = 0; i < wave.length; i++) {
-          const w = wave[i];
+        const { wave, T, observed, count } = this;
+        for (let i = 0; i < count; i++) {
+          const base = i * T;
           for (let t = 0; t < T; t++) {
-            if (w[t]) {
+            if (wave[base + t]) {
               observed[i] = t;
               break;
             }
@@ -165,10 +145,11 @@ export abstract class Model {
   }
 
   private nextUnobservedNode(random: Random): number {
-    if (this.heuristic === Heuristic.Scanline) {
-      for (let i = this.observedSoFar; i < this.wave.length; i++) {
-        if (!this.periodic && (i % this.MX + this.N > this.MX || ((i / this.MX) | 0) + this.N > this.MY)) continue;
-        if (this.sumsOfOnes[i] > 1) {
+    const { count, sumsOfOnes, entropies, MX, MY, N, periodic, heuristic } = this;
+    if (heuristic === Heuristic.Scanline) {
+      for (let i = this.observedSoFar; i < count; i++) {
+        if (!periodic && (i % MX + N > MX || ((i / MX) | 0) + N > MY)) continue;
+        if (sumsOfOnes[i] > 1) {
           this.observedSoFar = i + 1;
           return i;
         }
@@ -178,8 +159,7 @@ export abstract class Model {
 
     let min = 1e4;
     let argmin = -1;
-    const { wave, sumsOfOnes, entropies, MX, MY, N, periodic, heuristic } = this;
-    for (let i = 0; i < wave.length; i++) {
+    for (let i = 0; i < count; i++) {
       if (!periodic && (i % MX + N > MX || ((i / MX) | 0) + N > MY)) continue;
       const remainingValues = sumsOfOnes[i];
       const entropy = heuristic === Heuristic.Entropy ? entropies[i] : remainingValues;
@@ -195,20 +175,19 @@ export abstract class Model {
   }
 
   private observe(node: number, random: Random): void {
-    const w = this.wave[node];
-    const dist = this.distribution;
-    const weights = this.weights;
-    for (let t = 0; t < this.T; t++) {
-      dist[t] = w[t] ? weights[t] : 0;
+    const { wave, distribution: dist, weights, T } = this;
+    const base = node * T;
+    for (let t = 0; t < T; t++) {
+      dist[t] = wave[base + t] ? weights[t] : 0;
     }
     const r = weightedPick(dist, random.nextDouble());
-    for (let t = 0; t < this.T; t++) {
-      if (w[t] !== (t === r)) this.ban(node, t);
+    for (let t = 0; t < T; t++) {
+      if (wave[base + t] !== (t === r ? 1 : 0)) this.ban(node, t);
     }
   }
 
   private propagate(): boolean {
-    const { propagator, compatible, stackI, stackT, MX, N, periodic } = this;
+    const { propagator, compatible, stackI, stackT, MX, MY, N, periodic, T4 } = this;
     while (this.stacksize > 0) {
       this.stacksize--;
       const i1 = stackI[this.stacksize];
@@ -220,23 +199,21 @@ export abstract class Model {
       for (let d = 0; d < 4; d++) {
         let x2 = x1 + DX[d];
         let y2 = y1 + DY[d];
-        if (!periodic && (x2 < 0 || y2 < 0 || x2 + N > MX || y2 + N > this.MY)) continue;
+        if (!periodic && (x2 < 0 || y2 < 0 || x2 + N > MX || y2 + N > MY)) continue;
 
         if (x2 < 0) x2 += MX;
         else if (x2 >= MX) x2 -= MX;
-        if (y2 < 0) y2 += this.MY;
-        else if (y2 >= this.MY) y2 -= this.MY;
+        if (y2 < 0) y2 += MY;
+        else if (y2 >= MY) y2 -= MY;
 
         const i2 = x2 + y2 * MX;
         const p = propagator[d][t1];
-        const compat = compatible[i2];
+        const base2 = i2 * T4;
 
         for (let l = 0; l < p.length; l++) {
           const t2 = p[l];
-          const comp = compat[t2];
-
-          comp[d]--;
-          if (comp[d] === 0) this.ban(i2, t2);
+          const cidx = base2 + t2 * 4 + d;
+          if (--compatible[cidx] === 0) this.ban(i2, t2);
         }
       }
     }
@@ -244,13 +221,14 @@ export abstract class Model {
   }
 
   protected ban(i: number, t: number): void {
-    this.wave[i][t] = false;
+    const base = i * this.T;
+    this.wave[base + t] = 0;
 
-    const comp = this.compatible[i][t];
-    comp[0] = 0;
-    comp[1] = 0;
-    comp[2] = 0;
-    comp[3] = 0;
+    const cbase = i * this.T4 + t * 4;
+    this.compatible[cbase] = 0;
+    this.compatible[cbase + 1] = 0;
+    this.compatible[cbase + 2] = 0;
+    this.compatible[cbase + 3] = 0;
     this.stackI[this.stacksize] = i;
     this.stackT[this.stacksize] = t;
     this.stacksize++;
@@ -264,21 +242,20 @@ export abstract class Model {
   }
 
   protected clear(): void {
-    const { wave, compatible, propagator, weights } = this;
-    const T = this.T;
+    const { wave, compatible, propagator, weights, T, T4, count } = this;
 
-    for (let i = 0; i < wave.length; i++) {
-      const wi = wave[i];
-      const ci = compatible[i];
+    for (let i = 0; i < count; i++) {
+      const wbase = i * T;
+      const cbase = i * T4;
       for (let t = 0; t < T; t++) {
-        wi[t] = true;
+        wave[wbase + t] = 1;
         // support count = how many patterns the opposite-direction neighbor
         // lists as compatible with t (i.e. patterns that can sit on the d side).
-        const c = ci[t];
-        c[0] = propagator[OPPOSITE[0]][t].length;
-        c[1] = propagator[OPPOSITE[1]][t].length;
-        c[2] = propagator[OPPOSITE[2]][t].length;
-        c[3] = propagator[OPPOSITE[3]][t].length;
+        const ct = cbase + t * 4;
+        compatible[ct] = propagator[OPPOSITE[0]][t].length;
+        compatible[ct + 1] = propagator[OPPOSITE[1]][t].length;
+        compatible[ct + 2] = propagator[OPPOSITE[2]][t].length;
+        compatible[ct + 3] = propagator[OPPOSITE[3]][t].length;
       }
 
       this.sumsOfOnes[i] = weights.length;
@@ -289,18 +266,20 @@ export abstract class Model {
     }
     this.observedSoFar = 0;
 
-    // Ban patterns that have no compatible neighbor in some direction at the
-    // grid boundary (when not periodic). Mirrors mxgmn's Clear no-neighbor bans.
-    for (let y = 0; y < this.MY; y++) {
-      for (let x = 0; x < this.MX; x++) {
-        if (!this.periodic && (x + this.N > this.MX || y + this.N > this.MY)) continue;
+    // Ban patterns with no compatible neighbor in some direction at the
+    // boundary (when not periodic). Mirrors mxgmn's Clear no-neighbor bans.
+    const { MX, MY, N, periodic } = this;
+    for (let y = 0; y < MY; y++) {
+      for (let x = 0; x < MX; x++) {
+        if (!periodic && (x + N > MX || y + N > MY)) continue;
 
-        const i = x + y * this.MX;
+        const i = x + y * MX;
+        const wbase = i * T;
         for (let t = 0; t < T; t++) {
-          const noRight = (this.periodic || x < this.MX - this.N) && propagator[2][t].length === 0;
-          const noTop = (this.periodic || y > 0) && propagator[3][t].length === 0;
-          const noLeft = (this.periodic || x > 0) && propagator[0][t].length === 0;
-          const noBottom = (this.periodic || y < this.MY - this.N) && propagator[1][t].length === 0;
+          const noRight = (periodic || x < MX - N) && propagator[2][t].length === 0;
+          const noTop = (periodic || y > 0) && propagator[3][t].length === 0;
+          const noLeft = (periodic || x > 0) && propagator[0][t].length === 0;
+          const noBottom = (periodic || y < MY - N) && propagator[1][t].length === 0;
 
           if (noRight || noTop || noLeft || noBottom) this.ban(i, t);
         }
@@ -308,12 +287,13 @@ export abstract class Model {
     }
 
     if (this.ground) {
-      for (let x = 0; x < this.MX; x++) {
-        const bottom = x + (this.MY - 1) * this.MX;
-        for (let t = 0; t < T - 1; t++) if (this.wave[bottom][t]) this.ban(bottom, t);
-        for (let y = 0; y < this.MY - 1; y++) {
-          const i = x + y * this.MX;
-          if (this.wave[i][T - 1]) this.ban(i, T - 1);
+      for (let x = 0; x < MX; x++) {
+        const bottom = x + (MY - 1) * MX;
+        const wbot = bottom * T;
+        for (let t = 0; t < T - 1; t++) if (this.wave[wbot + t]) this.ban(bottom, t);
+        for (let y = 0; y < MY - 1; y++) {
+          const i = x + y * MX;
+          if (this.wave[i * T + (T - 1)]) this.ban(i, T - 1);
         }
       }
     }
@@ -321,15 +301,14 @@ export abstract class Model {
     if (this.stacksize > 0) this.propagate();
   }
 
-  /** The collapsed tile-variant index per cell, or -1 where unresolved/contradicted. */
   result(): Int32Array {
     return this.observed;
   }
 
-  /** True if every cell collapsed to exactly one variant (no contradiction). */
   isComplete(): boolean {
-    for (let i = 0; i < this.wave.length; i++) {
-      if (this.sumsOfOnes[i] !== 1) return false;
+    const { sumsOfOnes, count } = this;
+    for (let i = 0; i < count; i++) {
+      if (sumsOfOnes[i] !== 1) return false;
     }
     return true;
   }
@@ -338,7 +317,6 @@ export abstract class Model {
 /**
  * Weighted pick over a distribution: returns the index i where the running sum
  * of `values` first reaches r * total. Direct port of mxgmn's Helper.Random.
- * Returns 0 if all weights are zero (matches mxgmn's tail return).
  */
 export function weightedPick(values: Float64Array | number[], r: number): number {
   let sum = 0;

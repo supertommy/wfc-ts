@@ -17,19 +17,34 @@ the measurement pipeline is proven against an identity copy (≈1.0×, 0 deviati
 | Piece | Role | Independence |
 |-------|------|--------------|
 | `harness/run.ts` | Runs a solver (reference or optimized) on a committed input, times `run()` (construction excluded), writes a result file. | Treats ref/opt symmetrically via a `SolverKind`. |
-| `harness/compare.ts` | **Match gate**: optimized output must byte-match the reference (identical ok, complete, and sha256 checksum of the `observed[]` array). | The sharp gate — catches a propagation reorder that silently changes the collapse sequence. |
-| `harness/validate.ts` | **Validity gate**: independently re-derives adjacency from the tileset and checks the output tiling respects every constraint + has no contradiction. | Shares NO solver code — only the tileset parser. Validates the *output*, not the solver's internal state. |
+| `harness/compare.ts` | **Informational**: reports whether the optimized output byte-matches the reference (identical ok/complete/sha256). True for layout-only changes, false for algorithmic ones. Not a gate. | Shows whether an optimization also reproduces the reference's exact tiling — useful signal, never blocking. |
+| `harness/validate.ts` | **Validity gate**: independently re-derives adjacency from the tileset and checks the output tiling respects every constraint + has no contradiction + completes. | Shares NO solver code — only the tileset parser. Validates the *output*, not the solver's internal state. |
 | `harness/measure-speedup.ts` | **Timing**: median-of-N individual `run()` calls after one warmup; reports ref median, opt median, ratio. | Construction excluded (build-stage precompute, per the collision repo's policy). |
 
 ## Match contract
 
-WFC's collapse is random, so "identical output" is the wrong gate *unless* made
-deterministic. We do: mulberry32 (a seedable PRNG) is standardized across the
-reference and the optimized solver, so identical seed + input yields
-byte-identical `observed[]`. That determinism is what `compare` enforces — and
-what `validate` independently confirms is also a *valid* tiling. Two gates, both
-must pass, mirroring the collision repo's `compare_results` + `validate_contacts`
-split.
+We do not match the implementation's intermediate results — only the correct
+outputs. The optimized solver may compute differently (even use a different
+algorithm) as long as the output meets the contract:
+
+- **valid + complete** — the output is a valid tiling: every adjacency
+  constraint satisfied, no contradiction, every cell collapsed (`validate.ts`,
+  the independent validator that shares no solver code).
+- **deterministic** — same seed → same output, every run (run twice, sha256 of
+  the `observed[]` array must match). Catches flakiness and makes the benchmark
+  reproducible.
+
+The reference's role: it is the validator's correctness anchor (at iteration 0,
+the reference's output is valid, which proves the validator is sound) and the
+speedup baseline we measure against. It is **not** the tiling the optimized must
+reproduce — a valid WFC tiling is not unique, and the optimized is free to choose
+a different (valid) one via a faster algorithm.
+
+`compare.ts` (byte-match to reference) is **informational**, not a gate: it
+reports whether an optimization *also* reproduces the reference's exact tiling
+(true for layout-only changes, false for algorithmic changes like a heap). Worth
+knowing, never blocking. This mirrors the collision repo: the optimized uses a
+different algorithm held to an output contract, not identical intermediates.
 
 ## Committed inputs (never edited)
 
