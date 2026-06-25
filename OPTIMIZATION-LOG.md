@@ -253,3 +253,22 @@ typecheck+prove, after 3x measure5, gate, log+readme, commit).
 **Decision:** REVERT (git checkout -- src-optimized/). VALID+DET hold and selection identical (Tier-1 intent achieved, no change to which pattern chosen per PRNG draw), but no real end-to-end gain above noise: circuit ~4.727ms → ~4.72ms (diff <0.03ms, within run-to-run variance of ~0.05-0.09ms); knots flat or +0.01ms (within noise); rooms variance dominated. The O(T) cumsum build + bisect did not beat the original branchy linear scan's constant factor at T=9 or T=36. (Honest: for these tiny T, two passes over 36 floats is cheaper than build+search overhead.)
 
 **Cost:** ~1 LLM turn + ~9min wall (ground prove, 1x before measure5 + 4x after measure5 across 3 inputs for noise, 4x run.ts for checksum identity, 3x typecheck+prove, edit+reverts, log+readme, commit).
+
+## Hypothesis 8 — ban per-call overhead: defer entropy (Math.log) recompute from per-ban to flush [REVERTED]
+
+**Sub-profile (post-H6, temp instr on ban, reverted before impl):** ban() per-call sections timed via performance.now on circuit-turnless-34 and rooms-30 (via harness/run.ts; warmup+run; instr overhead inflates abs but relatives valid). 
+
+- circuit-turnless-34 (40460 bans/run): wave/stack~1.28ms, compat-zero=0.774ms, sums-updates=0.907ms, entropy/plogp-recompute=1.372ms, dirty-mark=0.822ms. entropy/plogp biggest.
+- rooms-30 (24300 bans/run): wave/stack~0.78ms, compat=0.579ms, sums=0.691ms, entropy/plogp=0.834ms, dirty=0.643ms. entropy/plogp biggest.
+
+**Hypothesis:** Post-H6, ban+heap is 25-31%. The per-ban entropy recompute (Math.log(sum) - plogpsum/sum) was the largest slice of ban time. By keeping sums incremental in ban (already O(1) no-log for the 3 sums), but moving only the final entropy write+log to flush (which already coalesces per-cell), #logs drops from O(bans) to O(dirtied-cells-per-phase). E.g. observe's T-1 same-cell bans become 1 log. Tier-2 (entropy fp values may differ slightly affecting heap selection order, thus different valid seq); gate only VALID+DET. (Compat zeroing and sums were smaller per subprof and compat zeroing correctness-sensitive.)
+
+**Change:** Single edit `src-optimized/model.ts` (ban: remove the 2-line entropy recompute after sums decr + H8 comment; flushHeapUpdates: destructure sumsOfWeights+sumsOfWeightLogWeights, for Entropy case compute+store entropies[i] + use as prio with sum>0 guard; update top comments + H6 jsdoc). No other files.
+
+**Before (median-of-5 harness/measure-speedup.ts on clean post-H6; multiple runs for var):** knots-standard-48: 1.95–2.09ms; circuit-turnless-34: 4.70–4.85ms; rooms-30: 2.11–2.20ms. (Prove runs in same period: ~1.65/4.21/1.74ms)
+
+**After (same protocol + prove, with H8 patch):** knots-standard-48: 1.90–1.97ms; circuit-turnless-34: 4.65–5.00ms; rooms-30: 2.14–2.38ms. (Prove: ~1.60–1.66 / 4.15–4.36 / 1.76–1.78ms). Gate always: typecheck clean; prove-harness VALID+DET (viol=0) on all inputs; DET re-runs matched checksums.
+
+**Decision:** REVERT (`git checkout -- src-optimized/model.ts`). VALID+DET held (incl. re-runs), knots within noise (flat/slight var). But circuit/rooms showed no REAL above-noise improvement: diffs ±0.03 to 0.15ms depending on run pair, fully within observed run-to-run variance (0.05–0.2ms across measure/prove); sometimes flat, sometimes slight regress on prop targets. The log savings were offset by extra work/branches in flush path (now always computes for entropy case). Math.log on this engine + tiny T not high enough payoff after H6 batching. (Subprof identified the lever correctly but end-to-end win did not materialize.)
+
+**Cost:** ~1 LLM turn + ~25min wall (subprof 4 runs + 2x revert instr, 8+ measure5 runs across stashes/checkouts for paired before/after + noise, 6x prove-harness for gate+ms, many typechecks, edits, log+readme, commit).
