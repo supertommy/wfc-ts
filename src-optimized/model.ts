@@ -49,6 +49,18 @@
 //   ops. Flush before pop keeps selection semantics identical (no mid-batch extract).
 //   Tier-2 (same as H4) but in practice preserves collapse order vs pre-H6.
 //
+// HYPOTHESIS 10: preliminary-action pruning — cache the clear() fixpoint.
+//
+//   clear() does the full reset + boundary bans + initial propagate fixpoint + heap
+//   rebuild on EVERY run(seed). The state after bans+propagate (wave/compat/sums*/entropies/observed)
+//   is a deterministic function of (grid+tileset+periodic+ground) — NO seed dependence
+//   (mulberry32 created after clear in run()). Cache it once after first clear's work;
+//   later clears restore via fast typed-array .set() instead of recomputing bans+prop.
+//   (TRIZ P.10: perform the preliminary action in advance.) Heap rebuild left in place
+//   (O(cells) cheap relative to the O(C*T + bans) work saved). Speed primary axis; extra
+//   memory for the snapshot copy is ACCEPTABLE. Outputs identical to before (same start
+//   state for given seed) so compare* status is unchanged. Gate on VALID+DET.
+//
 // PRNG: mulberry32, same as the reference (deterministic contract).
 
 import { mulberry32, type Random } from "./prng.js";
@@ -110,6 +122,19 @@ export abstract class Model {
   protected heapUpdateGen: Uint32Array = new Uint32Array(0);
   protected heapGen = 0;
 
+  // H10: cached post-clear fixpoint state (wave + compatible + sums + entropies + observed)
+  // after boundary bans + initial propagate (the maximally-pruned start state for this
+  // grid+tileset). Restored via .set() in clear(); captured once after first full clear.
+  // Deterministic (seed-independent). Heap left to rebuild each clear.
+  protected wave0: Uint8Array = new Uint8Array(0);
+  protected compatible0: Int32Array = new Int32Array(0);
+  protected sumsOfOnes0: Int32Array = new Int32Array(0);
+  protected sumsOfWeights0: Float64Array = new Float64Array(0);
+  protected sumsOfWeightLogWeights0: Float64Array = new Float64Array(0);
+  protected entropies0: Float64Array = new Float64Array(0);
+  protected observed0: Int32Array = new Int32Array(0);
+  protected hasFixpoint = false;
+
   protected sumOfWeights = 0;
   protected sumOfWeightLogWeights = 0;
   protected startingEntropy = 0;
@@ -166,6 +191,16 @@ export abstract class Model {
     this.dirtyCount = 0;
     this.heapUpdateGen = new Uint32Array(count);
     this.heapGen = 0;
+
+    // H10 snapshot buffers (same size as live; populated at end of first clear)
+    this.wave0 = new Uint8Array(count * T);
+    this.compatible0 = new Int32Array(count * T4);
+    this.sumsOfOnes0 = new Int32Array(count);
+    this.sumsOfWeights0 = new Float64Array(count);
+    this.sumsOfWeightLogWeights0 = new Float64Array(count);
+    this.entropies0 = new Float64Array(count);
+    this.observed0 = new Int32Array(count);
+    this.hasFixpoint = false;
   }
 
   run(seed: number, limit: number): boolean {
@@ -347,66 +382,93 @@ export abstract class Model {
   protected clear(): void {
     const { wave, compatible, propStart, propLen, weights, T, T4, count } = this;
 
-    for (let i = 0; i < count; i++) {
-      const wbase = i * T;
-      const cbase = i * T4;
-      for (let t = 0; t < T; t++) {
-        wave[wbase + t] = 1;
-        // support count = how many patterns the opposite-direction neighbor
-        // lists as compatible with t (i.e. patterns that can sit on the d side).
-        const ct = cbase + t * 4;
-        compatible[ct] = propLen[OPPOSITE[0] * T + t];
-        compatible[ct + 1] = propLen[OPPOSITE[1] * T + t];
-        compatible[ct + 2] = propLen[OPPOSITE[2] * T + t];
-        compatible[ct + 3] = propLen[OPPOSITE[3] * T + t];
-      }
-
-      this.sumsOfOnes[i] = weights.length;
-      this.sumsOfWeights[i] = this.sumOfWeights;
-      this.sumsOfWeightLogWeights[i] = this.sumOfWeightLogWeights;
-      this.entropies[i] = this.startingEntropy;
-      this.observed[i] = -1;
-    }
-    this.observedSoFar = 0;
-
-    // Ban patterns with no compatible neighbor in some direction at the
-    // boundary (when not periodic). Mirrors mxgmn's Clear no-neighbor bans.
-    const { MX, MY, N, periodic } = this;
-    for (let y = 0; y < MY; y++) {
-      for (let x = 0; x < MX; x++) {
-        if (!periodic && (x + N > MX || y + N > MY)) continue;
-
-        const i = x + y * MX;
+    if (this.hasFixpoint) {
+      // H10: restore the cached post-clear fixpoint via fast typed-array copy.
+      // Same starting state as after first clear's bans+prop => identical behavior.
+      this.wave.set(this.wave0);
+      this.compatible.set(this.compatible0);
+      this.sumsOfOnes.set(this.sumsOfOnes0);
+      this.sumsOfWeights.set(this.sumsOfWeights0);
+      this.sumsOfWeightLogWeights.set(this.sumsOfWeightLogWeights0);
+      this.entropies.set(this.entropies0);
+      this.observed.set(this.observed0);
+      this.observedSoFar = 0;
+      this.stacksize = 0;
+      // heap rebuild + dirty reset fall through below (always executed)
+    } else {
+      for (let i = 0; i < count; i++) {
         const wbase = i * T;
+        const cbase = i * T4;
         for (let t = 0; t < T; t++) {
-          const noRight = (periodic || x < MX - N) && propLen[2 * T + t] === 0;
-          const noTop = (periodic || y > 0) && propLen[3 * T + t] === 0;
-          const noLeft = (periodic || x > 0) && propLen[0 * T + t] === 0;
-          const noBottom = (periodic || y < MY - N) && propLen[1 * T + t] === 0;
-
-          if (noRight || noTop || noLeft || noBottom) this.ban(i, t);
+          wave[wbase + t] = 1;
+          // support count = how many patterns the opposite-direction neighbor
+          // lists as compatible with t (i.e. patterns that can sit on the d side).
+          const ct = cbase + t * 4;
+          compatible[ct] = propLen[OPPOSITE[0] * T + t];
+          compatible[ct + 1] = propLen[OPPOSITE[1] * T + t];
+          compatible[ct + 2] = propLen[OPPOSITE[2] * T + t];
+          compatible[ct + 3] = propLen[OPPOSITE[3] * T + t];
         }
-      }
-    }
 
-    if (this.ground) {
-      for (let x = 0; x < MX; x++) {
-        const bottom = x + (MY - 1) * MX;
-        const wbot = bottom * T;
-        for (let t = 0; t < T - 1; t++) if (this.wave[wbot + t]) this.ban(bottom, t);
-        for (let y = 0; y < MY - 1; y++) {
+        this.sumsOfOnes[i] = weights.length;
+        this.sumsOfWeights[i] = this.sumOfWeights;
+        this.sumsOfWeightLogWeights[i] = this.sumOfWeightLogWeights;
+        this.entropies[i] = this.startingEntropy;
+        this.observed[i] = -1;
+      }
+      this.observedSoFar = 0;
+
+      // Ban patterns with no compatible neighbor in some direction at the
+      // boundary (when not periodic). Mirrors mxgmn's Clear no-neighbor bans.
+      const { MX, MY, N, periodic } = this;
+      for (let y = 0; y < MY; y++) {
+        for (let x = 0; x < MX; x++) {
+          if (!periodic && (x + N > MX || y + N > MY)) continue;
+
           const i = x + y * MX;
-          if (this.wave[i * T + (T - 1)]) this.ban(i, T - 1);
+          const wbase = i * T;
+          for (let t = 0; t < T; t++) {
+            const noRight = (periodic || x < MX - N) && propLen[2 * T + t] === 0;
+            const noTop = (periodic || y > 0) && propLen[3 * T + t] === 0;
+            const noLeft = (periodic || x > 0) && propLen[0 * T + t] === 0;
+            const noBottom = (periodic || y < MY - N) && propLen[1 * T + t] === 0;
+
+            if (noRight || noTop || noLeft || noBottom) this.ban(i, t);
+          }
         }
       }
+
+      if (this.ground) {
+        for (let x = 0; x < MX; x++) {
+          const bottom = x + (MY - 1) * MX;
+          const wbot = bottom * T;
+          for (let t = 0; t < T - 1; t++) if (this.wave[wbot + t]) this.ban(bottom, t);
+          for (let y = 0; y < MY - 1; y++) {
+            const i = x + y * MX;
+            if (this.wave[i * T + (T - 1)]) this.ban(i, T - 1);
+          }
+        }
+      }
+
+      if (this.stacksize > 0) this.propagate();
+
+      // H10: capture the post-fixpoint state (after all bans + propagate).
+      // This is the pruned starting point for any run of this model.
+      this.wave0.set(this.wave);
+      this.compatible0.set(this.compatible);
+      this.sumsOfOnes0.set(this.sumsOfOnes);
+      this.sumsOfWeights0.set(this.sumsOfWeights);
+      this.sumsOfWeightLogWeights0.set(this.sumsOfWeightLogWeights);
+      this.entropies0.set(this.entropies);
+      this.observed0.set(this.observed);
+      this.hasFixpoint = true;
     }
 
-    if (this.stacksize > 0) this.propagate();
-
-    // H4: after all initial bans + any propagate from them, build the heap
+    // H4: after restore-or-compute of the fixpoint, (re)build the heap
     // containing exactly the cells eligible for selection (pass the N-boundary
     // filter) that still have sumsOfOnes > 1. Uses current entropies (or counts).
-    // H6: reset batching state after rebuild (fresh snapshot, no dirt ies).
+    // H6: reset batching state after rebuild.
+    // H10: heap rebuild kept (cheap O(cells)); the expensive fill+ban+prop is now elided on reuse.
     const h = this.entropyHeap;
     if (h) {
       h.clear();
@@ -454,6 +516,14 @@ export abstract class Model {
     bytes += this.sumsOfWeightLogWeights.byteLength;
     bytes += this.entropies.byteLength;
     bytes += this.observed.byteLength;
+    // H10: include snapshot copy (wave/compat/sums/ent/obs) so memory measurement reflects real delta
+    bytes += this.wave0.byteLength;
+    bytes += this.compatible0.byteLength;
+    bytes += this.sumsOfOnes0.byteLength;
+    bytes += this.sumsOfWeights0.byteLength;
+    bytes += this.sumsOfWeightLogWeights0.byteLength;
+    bytes += this.entropies0.byteLength;
+    bytes += this.observed0.byteLength;
     if (this.entropyHeap) bytes += this.entropyHeap.footprintBytes();
     return bytes;
   }

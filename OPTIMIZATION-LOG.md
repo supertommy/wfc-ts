@@ -302,3 +302,35 @@ existing algorithm; a new algorithm is a separate project).
 Stop reason (exit criteria (a)): every high-payoff candidate tried; the fresh
 Round 2 baseline profile + the H8 ban sub-profile reveal no new high-payoff
 candidate. Propagation is an algorithmic wall, not a micro-architectural one.
+
+## Hypothesis 10 — preliminary-action pruning: cache the clear() fixpoint [KEPT]
+
+**Hypothesis:** clear() (full wave/compat reset + boundary no-neighbor bans + initial propagate to fixpoint + heap build) is repeated on every `run(seed)`. The post-fixpoint state (wave + compatible + sumsOfOnes/Weights/WeightLogWeights + entropies + observed) is a deterministic function of (grid, tileset, periodic, ground) — independent of seed (PRNG created *after* clear). Cache the "maximally-pruned starting state" once; subsequent clear() restores it with typed-array `.set()` copies instead of recomputing. (TRIZ P.10: preliminary action hoisted.) Heap rebuild kept in clear (O(cells) cheap; not cached). Speed primary; memory for +1 copy of arrays ACCEPTABLE. Produces identical start state => same collapse for given seed (compare* status unchanged from H4).
+
+**Sub-profile (A, pre-impl):** temporarily instrumented `run()` (perf.now around clear vs loop; instr reverted before impl, `git diff` clean). Warm measured runs (harness/run.ts, 5x each):
+- knots-standard-48: clear ~0.27ms / loop~2.43ms / share ~10.0%
+- circuit-turnless-34: clear ~0.46ms / loop~5.43ms / share ~7.7%
+- rooms-30: clear ~0.31ms / loop~2.45ms / share ~11.2%
+>5% threshold and real work on large grids (fill O(C*T) + boundary bans + propagate), so implement (not reject).
+
+**Change (B):** Single file `src-optimized/model.ts` (exactly one change this iter). Added H10 snapshot fields (wave0 etc + hasFixpoint) + allocs in `init()`; restructured `clear()` with if (hasFixpoint) { .set() restores + zero stack/observedSoFar } else { original work + capture post-prop }; heap-rebuild + dirty-reset always after the if; updated `footprintBytes()` to count snapshots; added H10 header + inline comments. No heap state cached (rebuild kept). No other files touched. No debug left.
+
+**Gate + Measure (C):**
+- `npx tsc --noEmit` clean (strict) pre and post.
+- `bun run harness/prove-harness.ts`: VALID+DET (viol=0) on all; DET checksums match on re-runs. compare* FAIL unchanged (from H4 Tier-2). After also passes.
+- SPEED (primary, median-of-5 via `harness/measure-speedup.ts`; before via stash/checkout of clean post-H6, after on patch):
+
+| input               | ref ms | opt-before | opt-after | speedup-before | speedup-after |
+|---------------------|--------|------------|-----------|----------------|---------------|
+| knots-standard-48   | ~10.8  | 1.993 ms   | 1.799 ms  | 5.51x          | 5.93x         |
+| circuit-turnless-34 | ~7.4   | 4.896 ms   | 4.479 ms  | 1.55x          | 1.61x         |
+| rooms-30            | ~3.4   | 2.248 ms   | 1.950 ms  | 1.55x          | 1.71x         |
+
+- SUCCESS (knots-dense-24 N=100): 95/100 completed both before and after (identical, no regression).
+- MEMORY (`harness/memory.ts`): knots-48 722252→1148492 B (+426240 B); circuit 1.274MB→2.019MB (+744kB); rooms 781kB→1.238MB (+457kB). Second copy as predicted; acceptable.
+
+**Decision:** KEEP. All gates pass (VALID+DET mandatory). knots-48 no regression (gain). Real above-noise speed wins on circuit (+8.5%, 0.42ms) and rooms (+13%, 0.30ms) matching removed clear cost. Success unchanged. Memory growth per Round-3 spec (speed > mem). Committed.
+
+**Cost:** subprof 3 inputs x5 + 2x full measure5x3 + 2x success x100 + 2x mem + 4x prove + typechecks + edits + log/readme/commit ~10min wall + harness runs.
+
+Round 3 begins (first candidate H10 per attack order). Next: H15.
