@@ -526,3 +526,60 @@ recompute that was the largest ban sub-cost in prior profiles).
 **Cost:** stash/checkout dance + 3×(5+5) measure + 2×prove + success100 + success checks + mem + typechecks + edit + log/readme + commit ~12min wall + harness runs.
 
 Next candidate recommended: H24 (fast-log approx, if we ever want Entropy back) or H25 (spatial bias for prop cache locality on the remaining wall). Rank H24/H25 by re-profile on current (ban cost now gone, prop still ~60%+). H16 steppable also valuable for web but lower speed payoff.
+
+## Hypothesis 25 — spatially-biased selection for propagation cache locality (biomimicry nucleation) — INVESTIGATE FIRST [REJECTED]
+
+**STEP 1 — Investigation (executed FIRST, no impl committed until analyzed):**
+
+Sub-profiled the spatial spread of *consecutive observed cells* (the selection sequence driving prop) under the live optimized (post-H22 MRV default + H4 heap + static lower-cell-index tie-break on equal sumsOfOnes).
+
+Used temp instrumentation (reverted) + standalone driver (not committed) to capture observe(i) sequence per successful first-attempt solve, compute mean avg consecutive Manhattan/Euclidean distance over multiple seeds.
+
+**Clustering measurements (first-attempt completes only):**
+
+- circuit-turnless-34 (34x34, periodic, N~8-10 seeds): mean(avgManhattan consecutive-obs) = 4.24 ; mean(avgEuclid) = 3.85 ; avg observes ~805 (out of 1156 cells; rest forced by prop). Range stable ~3.5-4.7 manh.
+- rooms-30 (30x30, non-per, N=10): mean manh=3.02 ; eu=2.81 ; avg obs~514 (out of 900).
+- knots-standard-48 also ~3.23 manh (very local).
+
+For reference, expected manhattan between two *uniform-random* distinct cells on MxM grid (no torus):
+  avg|dx| ≈ M/3  → avg manh ≈ 2M/3.  For M=34 ≈22.7; M=30≈20.
+
+Observed consecutive steps are 5–6.6× *tighter* than random. This proves the assumption in the H25 ideation ("heap scatters picks globally") is false under MRV: the priority field (sumsOfOnes) is mutated exactly by the propagation wavefront, so the global min is almost always a cell adjacent-or-near the last collapse. The collapse order is already a local-growth / crystal-nucleation pattern (starting from cell 0 due to index tie-break, then radiating).
+
+**Implication for cache locality:** The propagation hot loop (for each ban i1, walk its 4 dirs, load i2's compatible row for the t2 list) already touches memory rows that are spatially near the previous ones. With row-major layout of wave/compatible (i*T4 stride), avg step-4 means high chance of same/near cache lines. Little headroom remains for a selection bias to improve prop cache hit rate.
+
+**Clean implementation options considered (would have done only if headroom existed):**
+
+(a) Replace static tie-break key (cell index) with a static space-filling curve (Morton/Z-order) index. "Lower index wins" would then prefer spatially-near in 2D. *But* — to realize the cache win the wave+compatible arrays would also have to be re-indexed into Morton order (else the tiebreak only affects pick order, not memory layout of accesses). Morton neighbors (dx,dy=±1) are *not* adjacent in the 1D layout; delta-i jumps by large irregular amounts. This would *scatter* the i2 accesses in the decrement loop — actively hurting the locality H25 is trying to create. Tension acknowledged in task brief; net-negative, rejected.
+
+(b) *After* the heap yields a true min-priority cell (and its minPrio value), scan a tiny spatial window (r=3, ~49 cells) around `lastCollapsed`. Collect/choose a cell inside the window whose *current* sumsOfOnes (or entropy) exactly equals that minPrio; prefer the closest (then lowest idx for det). If none match minPrio, fall back to heap's choice. Heap invariants unchanged (never returns a non-min), no dynamic key changes, still O(log) core. Window cheap (<< observe cost). Fully deterministic. This was the "most promising clean approach" per task.
+
+(c) Switch to explicit frontier mode: after first seed collapse (perhaps force center), only consider cells adjacent to already-observed for the heap or a queue. BFS-ish growth. Much larger change; alters the contraction order surface; success rate and perf would both move. Tier-2 stretch. Low priority given (b).
+
+**Experiment with clean (b) (temp only, fully reverted before log/commit):**
+
+Added lastCollapsed tracking + _findNearbyMinPrio + adjusted nextUnobservedNode to promote a same-prio neighbor when present (heap pop/push/ remove used to keep structure valid). Re-ran cluster driver: bias *did* bite — circuit manh tightened 4.24 → 3.33, rooms 3.02 → 2.24.
+
+Paired speed measurements (median-5, same machine, stash for before):
+
+| input            | baseline opt (no bias) | with (b) bias | delta |
+|------------------|------------------------|---------------|-------|
+| knots-standard-48| 1.641 ms              | 1.995 ms     | -21% reg |
+| circuit-turnless-34 | 3.404 ms           | 3.593 ms     | -5.5% reg |
+| rooms-30         | 1.657 ms              | 1.819 ms     | -10% reg |
+
+Success-rate knots-dense-24 N=20 stayed 100% (H12 covers). But no speed win on the prop targets; actual regression (extra per-observe work + different collapse order apparently lengthens some prop chains or changes restart counts).
+
+On dense, median time also much worse under bias (0.46 ms → 1.9 ms).
+
+**Gate:** With patch applied temporarily, prove-harness still reported VALID + DET (self-consistent). Typecheck clean. After revert, back to recorded baselines.
+
+**Decision:** REJECT (no impl landed in src-optimized/). 
+- Already-clustered measurements show the premise has no target.
+- Even the clean, heap-safe (b) produces no speed gain on circuit/rooms (and regresses knots).
+- Memory neutral (no allocs).
+- H25 is the last pure-cache angle on the prop wall; all prior alg attempts (H5,H15,...) also reverted. The decrement loop is effectively optimal under current AC-4 + flat arrays in plain JS.
+
+**Cost:** full STEP1 + driver (multiple N=10 runs) + temp (b) + 2×(3×5 measures) + success + prove x2 + type xN + cleanup + log/readme + this commit ~18min wall + harness executions. All numbers are real harness output, no fabrication.
+
+Next: given H25 rejected, the loop should pivot to H16 (steppable/cancelable generator loop — the differentiator for "best on web") + memory candidates (H18/H20 if speed-neutral) + one final ideation pass (TRIZ/first-principles on whether AC-4+greedy itself is the limit). H21 WebGPU is plausible for raw 3x but only as optional path; plain JS stays, and current ~2x on circuit/rooms may be the practical ceiling without new algorithm. Re-profile optimized to confirm prop % is still dominant before more work.

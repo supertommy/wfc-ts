@@ -59,7 +59,7 @@ informational. See `prompts/optimize-one.md`.
 | H22 | MRV selection (sumsOfOnes) instead of entropy — eliminate the per-ban Math.log recompute entirely | 2 (valid+det) | speed (ban entropy cost ~8-12%) | KEPT | default MRV (from Entropy); ban() entropy work (sums+Math.log) now guarded `if (Entropy)`. Tier-2 (select order changes); knots 1.725→1.695ms (no reg), circuit 4.032→3.650ms (+9.5%), rooms 1.885→1.784ms (+5%); dense success 100%→100%; mem ~unchanged; VALID+DET; See log. |
 | H23 | compatible Int32 → Uint8 (counts are ≤T<256 for our tilesets, exact — no cap) | 1 (byte-id) | speed (propagation decrement loop — the 60-66% wall, via 4x cache reduction) | KEPT | Uint8 (maxPropLen=5/14/8 for knots/circuit/rooms); knots 1.791→1.728ms (no reg), circuit 4.358→4.037ms (+7.4%), rooms 1.965→1.898ms (+3.4%); mem -498kB/-1.0MB/-604kB; VALID+DET (byte-id); Tier-1 cache win on wall. See log. |
 | H24 | fast-log bitcast approximation (replace Math.log with bitcast log2 ~5-10x faster) | 2 (valid+det) | speed (ban entropy cost) | TODO | IDEATION alternative to H22 if entropy selection is worth keeping — entropy only needs monotonic order for the heap, so a fast approx preserves it closely. Tier-2 (slight order drift). |
-| H25 | spatially-biased selection (among min-entropy cells, pick nearest last-collapsed) | 2 (valid+det) | speed (propagation cache locality) | TODO | IDEATION/biomimicry (crystal nucleation): the heap scatters picks globally → propagation ripples back and forth; spatial bias gives the compatible/wave arrays better cache locality. Touches the wall via cache, not algorithm. Stretch; measure. |
+| H25 | spatially-biased selection (among min-entropy cells, pick nearest last-collapsed) | 2 (valid+det) | speed (propagation cache locality) | REJECTED | STEP1: already highly clustered (circuit avgManh consecutive-obs=4.24 vs ~23 random; rooms=3.02 vs~20). Heap+MRV does local nucleation naturally; no headroom. Even clean window-bias impl (b) tightens cluster but regresses speed (no cache win). See log. |
 
 H3 (index-ordered active-cell bitset to trim the scan) is **deliberately skipped**:
 H4's heap replaces the scan entirely, so H3 would be throwaway work.
@@ -181,9 +181,9 @@ is REVERTED. A speed win that costs memory is KEPT.
 4. H14/H17 success refinements — REJECTED (success axis maxed, no target).
 5. **H23 compatible→Uint8 — KEPT** (cache win: circuit +7%, rooms +3.4%, knots held; all Uint8; VALID+DET byte-id).
 6. **H22 MRV selection — KEPT** (elim per-ban Math.log via MRV default+guard; circuit +9.5%, rooms +5%, knots held; VALID+DET).
-7. H24 fast-log approx / H25 spatial-biased selection — IDEATION alternatives (ban cost / cache locality).
+7. H24 fast-log approx — REJECTED (subsumed by H22). H25 spatial — REJECTED after STEP1 (already clustered; see log).
 8. H16 steppable run loop — web-ecosystem robustness (needed for "best on web").
-9. H21 WebGPU — stretch speed path only if H24/H25 don't reach the target.
+9. H21 WebGPU — stretch speed path (now that H24/H25 rejected).
 10. Memory candidates (H18 sparse, H20 multi-res) — last; only if speed-neutral-or-better. (H11 wave-bitpack, H19 arena REJECTED: speed-cost / no-target.)
 
 **Round 3 target:** push circuit-turnless-34 and rooms-30 speedup vs reference
@@ -206,7 +206,7 @@ now 1B/entry vs 4B). VALID+DET + byte-id (Tier-1). First cache-layout win on pro
 recompute in ban() (skipped when heuristic != Entropy). Speed win on ban path: circuit 4.032→3.650ms
 (+9.5%), rooms 1.885→1.784ms (+5.4%), knots 1.725→1.695 (no reg, slight gain). Success 100% dense
 unchanged (H12 covers). Mem neutral (left H10 snapshots as-is). VALID+DET. Tier-2 (order change).
-Now propagation remains the wall; next candidates H24/H25 for further. Round 3 speed target still open.
+Now propagation remains the wall; H24 (subsumed) + H25 (already-clustered, no headroom) rejected after investigation+exp. Round 3 speed target still open (circuit/rooms ~1.9-2.1x). Pivot to H16 or H21 or final ideation.
 
 ## Exit criteria (the orchestrator checks each loop turn)
 
