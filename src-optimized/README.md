@@ -46,7 +46,7 @@ informational. See `prompts/optimize-one.md`.
 | H9 | eliminate dist[] materialization in observe (direct wave+weights scan for sum/pick, still O(T) but save stores) | 1 (byte-id) | observe (4%) | REJECTED | low-Amdahl sub-micro of the observe phase; H7 already showed observe O(T) reorders yield no measurable gain at T=9/36, so a strictly smaller observe tweak (saving a few stores) cannot net a win. Not worth an iteration. |
 | H10 | cache clear() fixpoint (prelim-action pruning): snapshot wave/compat/sums/ent/obs post-bans+initial-prop; restore .set() on reuse | 2 (valid+det) | speed (all; clear 8-12%) + success (N seeds) | KEPT | subprof clear 7.7-11% (0.26-0.46ms); medians opt: knots 1.993→1.799 / circ 4.896→4.479 / rooms 2.248→1.950 ms (5.51→5.93x /1.55→1.61x /1.55→1.71x); mem +426kB knots-48 (acceptable); success 95% unch; VALID+DET (compare* FAIL from H4); see log |
 | H11 | bitpacked wave (1 bit/pattern) + narrow compatible (Uint16/Uint8, counts capped at 255) | 1 (byte-id, layout-only) | memory | TODO | easy memory win; wave 8x, compatible 2-4x. Guard saturation. |
-| H12 | restart-with-derived-seeds on contradiction (no undo stack) | 2 (valid+det; new contract: seed+budget) | success-rate | TODO | we're fast, so N restarts beat backtracking; derived seeds keep determinism. |
+| H12 | restart-with-derived-seeds on contradiction (no undo stack) | 2 (valid+det; new contract: seed+budget) | success-rate | KEPT | 95%→100% on knots-dense-24 (N=100); deriveRestartSeed(base,k) pure mulberry-mix; speed flat (within noise) on knots-48/circuit/rooms; mem unchanged; VALID+DET (new contract); see log |
 | H13 | CDCL-style conflict learning across restarts (learn forbidden collapse-combos, forbid next restart) | 2 (valid+det) | success-rate (big swing) | TODO | the miniSAT engine; makes hard inputs actually solvable. Highest-leverage success idea. |
 | H14 | one-step look-ahead selection (forward-checking-lite; pick collapse minimizing threatened cells) | 2 (valid+det) | success-rate | TODO | prevents immediate dead-ends, no backtracking; cost ~T/observe, hard-inputs mode. |
 | H15 | watched-literal propagation (full AC-4 counts → single watched witness + fixed-pool dll watchers) | 2 (valid+det) | speed (circuit/rooms prop wall) | REVERTED | no win (regressed 5-23% on all; list mgmt+rescans > saved decrements); see log |
@@ -185,7 +185,7 @@ is REVERTED. A speed win that costs memory is KEPT.
 **Round 3 target:** push circuit-turnless-34 and rooms-30 speedup vs reference
 well past the Round 2 wall (1.7x) toward >=3x via the algorithmic levers (H10/H15),
 AND raise knots-dense-24 completion rate (success-rate.ts) from 92% -> >=99% via
-H12/H13, while holding knots-48 >=6x. The real stop is idea exhaustion: an
+H12/H13 (H12 achieved 95%→100%); while holding knots-48 >=6x. The real stop is idea exhaustion: an
 ideation pass (see optimize-one.md STALL->IDEATE) yields no new high-payoff
 candidate. Minimum ~25 iterations or until exhausted.
 

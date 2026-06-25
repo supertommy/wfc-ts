@@ -360,3 +360,25 @@ Round 3 begins (first candidate H10 per attack order). Next: H15.
 **Cost:** stash/measure before 3×5 + impl + 3×5 after + success100 + mem3 + 4×prove + typecheck + log/readme ~12min wall + runs.
 
 Round 3: H15 attempted+reverted (no win on prop wall). Next per attack order: H12 (restart seeds for success).
+
+## Hypothesis 12 — restart-with-derived-seeds on contradiction (no undo stack)  [KEPT]
+
+**Hypothesis:** On contradiction, restart the solve (clear + fresh PRNG) using a deterministic derived seed instead of failing. Because the solver is already <2ms even on 48x48 (H10 made clear() O(1) copies), a budget of restarts is far cheaper than maintaining an undo stack for backtracking, and random-restart (here derived) escapes the bad collapse order basins that cause immediate dead-ends on hard inputs like knots-dense. Attempt 0 uses the caller's seed verbatim to preserve all prior behavior and committed outputs.
+
+**Change:** Exactly one file `src-optimized/model.ts`. (1) Added `deriveRestartSeed(base, k)` — a pure mulberry-style 32-bit finalizer mixer (golden ratio scramble + imul steps) documented in source; (2) extended `run(seed, limit, restartBudget = 100)` with outer attempt loop: attempt 0 uses raw seed, k>=1 derives; on propagate contradiction do clear+retry (up to budget); only return false after all attempts fail; on any attempt completing, populate observed and return true. Preserves H6 batching + H10 fixpoint (clear per attempt is the fast path). No other files; no debug/instrumentation left.
+
+**Gate + Measure (followed prompts/optimize-one.md exactly):**
+- `npx tsc --noEmit` clean (strict).
+- `bun run harness/prove-harness.ts`: VALID+DET on all 6 inputs (viol=0); compare* FAIL unchanged (Tier-2 since H4). Re-runs with default budget=100 match (new contract). Attempt-0 behavior verified identical for completing seeds (explicit budget=0 vs default yield same observed; committed seeds unaffected).
+- Pre-H12 baselines (grounding): success knots-dense-24 N=100: opt 95/100; measure medians (5): knots-48 opt 1.794ms (5.98x), circuit 4.325ms (1.63x), rooms 1.905ms (1.89x); mem knots-48 1.148MB.
+- SUCCESS (primary for H12): `bun run harness/success-rate.ts knots-dense-24 100` → opt 100/100 (100%) from 95%. Also checked: knots-standard-24 100% (no reg), rooms-30 50/50 (no reg).
+- SPEED (must not regress; speed > success): `bun run harness/measure-speedup.ts * 5` post: knots-48 1.813ms (5.95x), circuit-turnless-34 4.377ms (1.72x), rooms-30 1.997ms (1.76x) — all within run-to-run noise of pre-H12; no regression on committed first-try seeds.
+- MEMORY: `bun run harness/memory.ts` knots-48 1148492 B (unchanged, as predicted — no undo state); dense same 261kB.
+
+**Contract note:** run() is now deterministic on (seed, restartBudget) tuple rather than seed alone. Gate re-verified with default budget; DET holds. VALID = still produces complete valid tilings (0 viol).
+
+**Decision:** KEEP (committed immediately after gate+measure). Meets keep criteria exactly: VALID+DET, dense completion 95%→100% (exceeds >=99% target), speed on the 3 inputs flat (no meaningful reg), no success regressions elsewhere, mem neutral. Small median time in success-rate is acceptable/expected when more seeds complete via retries (here negligible). This is the success-rate frontier; H13 (CDCL) can build on the restart infra by recording conflict paths.
+
+**Cost:** grounding (prove + 3x success + 3x measure5 + 2x mem) + impl (doc+derive+run edit) + post gates/measures (typecheck + prove + 3x success + 3x measure5 + 2x mem + det experiments) ~8min wall + harness runs.
+
+Next candidate recommended: H13 (CDCL-style learning). The restart loop already supports it: on contradiction we can inspect the final stack/wave to extract the conflicting partial assignment and carry a forbid-set into subsequent attempts' clears (or a global nogood across runs). Does the current infra make that cheap? Yes — clear is now a restore point we can further customize. (See return summary.)
