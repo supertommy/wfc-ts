@@ -55,6 +55,11 @@
       background: #2d2d44;
       color: #fff;
     }
+    label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
     .canvas-container {
       background: #2d2d44;
       border-radius: 8px;
@@ -70,12 +75,19 @@
       gap: 2rem;
       font-size: 0.9rem;
       color: #aaa;
+      flex-wrap: wrap;
+      justify-content: center;
     }
     .stats span { color: #fff; }
     .legend {
       margin-top: 1rem;
       font-size: 0.8rem;
       color: #888;
+      text-align: center;
+    }
+    .error {
+      color: #e74c3c;
+      margin-top: 1rem;
     }
   </style>
 </head>
@@ -94,10 +106,10 @@
     <label>
       Size:
       <select id="size">
-        <option value="24">24×24</option>
+        <option value="12">12×12</option>
+        <option value="24" selected>24×24</option>
         <option value="32">32×32</option>
-        <option value="48" selected>48×48</option>
-        <option value="64">64×64</option>
+        <option value="48">48×48</option>
       </select>
     </label>
     <label>
@@ -105,284 +117,360 @@
       <input type="number" id="seed" value="12345" min="0">
     </label>
     <label>
-      Speed:
-      <select id="speed">
-        <option value="1">Slow (1/frame)</option>
-        <option value="10" selected>Medium (10/frame)</option>
-        <option value="50">Fast (50/frame)</option>
-        <option value="0">Instant</option>
-      </select>
+      Periodic:
+      <input type="checkbox" id="periodic" checked>
     </label>
   </div>
   
   <div class="controls">
+    <label>
+      Speed:
+      <select id="speed">
+        <option value="1">Slow (1/step)</option>
+        <option value="10" selected>Medium (10/step)</option>
+        <option value="50">Fast (50/step)</option>
+        <option value="0">Instant</option>
+      </select>
+    </label>
     <button id="start" class="primary">▶ Start</button>
-    <button id="step" disabled>⏭ Step</button>
     <button id="stop" class="danger" disabled>⏹ Stop</button>
     <button id="reset">🔄 Reset</button>
+    <button id="random">🎲 Random Seed</button>
+    <button id="compare">📊 Compare with mxgmn</button>
   </div>
   
-  <div class="canvas-container">
-    <canvas id="canvas" width="480" height="480"></canvas>
+  <div style="display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center;">
+    <div class="canvas-container">
+      <div style="text-align: center; margin-bottom: 0.5rem; font-size: 0.9rem;">wfc-ts (ours)</div>
+      <canvas id="canvas" width="480" height="480"></canvas>
+    </div>
+    <div class="canvas-container" id="canonical-container" style="display: none;">
+      <div style="text-align: center; margin-bottom: 0.5rem; font-size: 0.9rem;">mxgmn (canonical)</div>
+      <img id="canonical-img" style="image-rendering: pixelated;">
+    </div>
   </div>
   
   <div class="stats">
     <div>Cells: <span id="cells">0</span> / <span id="total">0</span></div>
     <div>Time: <span id="time">0</span>ms</div>
+    <div>Attempt: <span id="attempt">1</span></div>
     <div>Status: <span id="status">Ready</span></div>
   </div>
   
   <div class="legend">
-    Colors show remaining tile possibilities: dark → few options, bright → many options, solid → collapsed
+    Tiles are rendered from the actual WFC solver. Gray cells = not yet collapsed.
   </div>
+  
+  <div id="error" class="error"></div>
 
   <script type="module">
-    // This visualizer demonstrates the stepRun API
-    // In a real project, you'd import from 'wfc-ts'
-    
-    // For this demo, we'll simulate the WFC behavior
-    // The actual solver would be imported as:
-    // import { SimpleTiledModel, loadTileset } from 'wfc-ts';
-    
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     
     const tilesetSelect = document.getElementById('tileset');
     const sizeSelect = document.getElementById('size');
     const seedInput = document.getElementById('seed');
+    const periodicInput = document.getElementById('periodic');
     const speedSelect = document.getElementById('speed');
     const startBtn = document.getElementById('start');
-    const stepBtn = document.getElementById('step');
     const stopBtn = document.getElementById('stop');
     const resetBtn = document.getElementById('reset');
+    const randomBtn = document.getElementById('random');
     const cellsSpan = document.getElementById('cells');
     const totalSpan = document.getElementById('total');
     const timeSpan = document.getElementById('time');
+    const attemptSpan = document.getElementById('attempt');
     const statusSpan = document.getElementById('status');
+    const errorDiv = document.getElementById('error');
     
     let running = false;
-    let generator = null;
     let abortController = null;
-    let startTime = 0;
+    let tilesetInfo = null;
+    let tileImages = {}; // { tilesetName: { tileName: Image } }
+    let currentResult = null;
+    let gridSize = 24;
+    let tileSize = 10; // Tile size in the tileset images
     
-    // Simulated WFC state
-    let gridSize = 48;
-    let state = null; // Array of remaining tile counts per cell
-    let collapsed = null; // Array of collapsed tile indices
+    // Load tileset info from server
+    async function loadTilesetInfo() {
+      try {
+        const res = await fetch('/api/tilesets');
+        tilesetInfo = await res.json();
+        console.log('Loaded tileset info:', tilesetInfo);
+      } catch (e) {
+        errorDiv.textContent = `Failed to load tilesets: ${e.message}. Make sure the server is running (bun run viz/server.ts)`;
+        throw e;
+      }
+    }
     
-    // Color palette for visualization
-    const colors = [
-      '#1a1a2e', // 0 - contradiction (shouldn't happen)
-      '#4a1a4a', // 1 - almost collapsed
-      '#4a4a1a', // 2
-      '#1a4a4a', // 3
-      '#3a3a5a', // 4
-      '#4a4a6a', // 5+
-    ];
-    
-    const collapsedColors = [
-      '#e74c3c', '#e67e22', '#f1c40f', '#2ecc71', '#1abc9c',
-      '#3498db', '#9b59b6', '#34495e', '#95a5a6', '#fff',
-    ];
-    
-    function initState() {
-      const size = parseInt(sizeSelect.value);
-      gridSize = size;
-      const T = tilesetSelect.value === 'Circuit' ? 36 : 
-                tilesetSelect.value === 'Rooms' ? 28 : 9;
+    // Load tile images for a tileset
+    async function loadTileImages(tilesetName) {
+      if (tileImages[tilesetName]) return tileImages[tilesetName];
       
-      state = new Array(size * size).fill(T);
-      collapsed = new Array(size * size).fill(-1);
+      const info = tilesetInfo[tilesetName];
+      const images = {};
+      const uniqueNames = [...new Set(info.tiles.map(t => t.name))];
       
-      canvas.width = size * 10;
-      canvas.height = size * 10;
+      await Promise.all(uniqueNames.map(name => {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => {
+            images[name] = img;
+            tileSize = img.width; // Get actual tile size from image
+            resolve();
+          };
+          img.onerror = () => {
+            console.warn(`Failed to load tile: ${name}`);
+            resolve(); // Continue anyway
+          };
+          img.src = `/tiles/${tilesetName}/${name}.png`;
+        });
+      }));
       
-      totalSpan.textContent = size * size;
+      tileImages[tilesetName] = images;
+      return images;
+    }
+    
+    // Initialize display
+    async function initDisplay() {
+      gridSize = parseInt(sizeSelect.value);
+      const tilesetName = tilesetSelect.value;
+      
+      await loadTileImages(tilesetName);
+      
+      // Calculate canvas size
+      const scale = Math.max(1, Math.floor(480 / (gridSize * tileSize)));
+      const displayTileSize = tileSize * scale;
+      canvas.width = gridSize * displayTileSize;
+      canvas.height = gridSize * displayTileSize;
+      
+      currentResult = new Array(gridSize * gridSize).fill(-1);
+      totalSpan.textContent = gridSize * gridSize;
       cellsSpan.textContent = '0';
       timeSpan.textContent = '0';
+      attemptSpan.textContent = '1';
       statusSpan.textContent = 'Ready';
+      errorDiv.textContent = '';
       
       render();
     }
     
+    // Render the current state
     function render() {
-      const cellSize = canvas.width / gridSize;
+      const tilesetName = tilesetSelect.value;
+      const images = tileImages[tilesetName] || {};
+      const info = tilesetInfo?.[tilesetName];
+      
+      const scale = Math.max(1, Math.floor(480 / (gridSize * tileSize)));
+      const displayTileSize = tileSize * scale;
+      
+      ctx.fillStyle = '#3a3a5a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       
       for (let y = 0; y < gridSize; y++) {
         for (let x = 0; x < gridSize; x++) {
           const i = x + y * gridSize;
-          const remaining = state[i];
-          const tile = collapsed[i];
+          const tileIdx = currentResult?.[i] ?? -1;
           
-          if (tile >= 0) {
-            // Collapsed - use tile color
-            ctx.fillStyle = collapsedColors[tile % collapsedColors.length];
-          } else {
-            // Not collapsed - show remaining count
-            const colorIdx = Math.min(remaining, colors.length - 1);
-            ctx.fillStyle = colors[colorIdx];
-          }
+          const dx = x * displayTileSize;
+          const dy = y * displayTileSize;
           
-          ctx.fillRect(x * cellSize, y * cellSize, cellSize - 0.5, cellSize - 0.5);
-        }
-      }
-    }
-    
-    // Simulated WFC step (in real usage, this would be the actual solver)
-    function* simulateWFC(seed) {
-      const rng = mulberry32(seed);
-      const total = gridSize * gridSize;
-      let resolved = 0;
-      
-      while (resolved < total) {
-        // Find cell with minimum remaining values (MRV)
-        let minIdx = -1;
-        let minVal = Infinity;
-        for (let i = 0; i < total; i++) {
-          if (collapsed[i] < 0 && state[i] < minVal) {
-            minVal = state[i];
-            minIdx = i;
-          }
-        }
-        
-        if (minIdx < 0) break;
-        
-        // Collapse it
-        const tile = Math.floor(rng() * minVal);
-        collapsed[minIdx] = tile;
-        state[minIdx] = 1;
-        resolved++;
-        
-        // Simulate propagation (reduce neighbor counts)
-        const x = minIdx % gridSize;
-        const y = Math.floor(minIdx / gridSize);
-        const neighbors = [
-          [x-1, y], [x+1, y], [x, y-1], [x, y+1],
-          [x-2, y], [x+2, y], [x, y-2], [x, y+2],
-        ];
-        
-        for (const [nx, ny] of neighbors) {
-          if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize) {
-            const ni = nx + ny * gridSize;
-            if (collapsed[ni] < 0 && state[ni] > 1) {
-              state[ni] = Math.max(1, state[ni] - Math.floor(rng() * 2));
+          if (tileIdx >= 0 && info && info.tiles[tileIdx]) {
+            const tile = info.tiles[tileIdx];
+            const img = images[tile.name];
+            
+            if (img) {
+              ctx.save();
+              ctx.translate(dx + displayTileSize / 2, dy + displayTileSize / 2);
+              // mxgmn rotates CCW, canvas rotates CW for positive angles, so negate
+              ctx.rotate(-(tile.rotation * Math.PI) / 2);
+              ctx.drawImage(img, -displayTileSize / 2, -displayTileSize / 2, displayTileSize, displayTileSize);
+              ctx.restore();
+            } else {
+              // Fallback: colored square
+              ctx.fillStyle = `hsl(${(tileIdx * 37) % 360}, 60%, 50%)`;
+              ctx.fillRect(dx, dy, displayTileSize - 1, displayTileSize - 1);
             }
+          } else {
+            // Not collapsed: gray
+            ctx.fillStyle = '#2a2a3a';
+            ctx.fillRect(dx, dy, displayTileSize - 1, displayTileSize - 1);
           }
         }
-        
-        yield { done: false, observedCell: minIdx, cellsResolved: resolved };
       }
-      
-      yield { done: true, ok: true, complete: true };
     }
     
-    // Mulberry32 PRNG (matches the solver's PRNG)
-    function mulberry32(seed) {
-      return function() {
-        let t = seed += 0x6D2B79F5;
-        t = Math.imul(t ^ t >>> 15, t | 1);
-        t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-        return ((t ^ t >>> 14) >>> 0) / 4294967296;
-      };
-    }
-    
+    // Run solver (streaming or instant)
     async function run() {
       running = true;
       startBtn.disabled = true;
-      stepBtn.disabled = true;
       stopBtn.disabled = false;
       statusSpan.textContent = 'Running...';
+      errorDiv.textContent = '';
       
+      await initDisplay();
+      
+      const tilesetName = tilesetSelect.value;
+      const width = gridSize;
+      const height = gridSize;
       const seed = parseInt(seedInput.value) || 12345;
+      const periodic = periodicInput.checked;
       const speed = parseInt(speedSelect.value);
       
-      initState();
-      startTime = performance.now();
-      generator = simulateWFC(seed);
+      abortController = new AbortController();
       
-      const animate = () => {
-        if (!running) return;
-        
-        const stepsPerFrame = speed || gridSize * gridSize; // 0 = instant
-        
-        for (let i = 0; i < stepsPerFrame; i++) {
-          const result = generator.next();
+      try {
+        if (speed === 0) {
+          // Instant mode
+          const res = await fetch(`/api/solve-instant?tileset=${tilesetName}&width=${width}&height=${height}&seed=${seed}&periodic=${periodic}`, {
+            signal: abortController.signal,
+          });
+          const data = await res.json();
           
-          if (result.value.done) {
-            running = false;
-            const elapsed = performance.now() - startTime;
-            timeSpan.textContent = elapsed.toFixed(1);
-            statusSpan.textContent = result.value.ok ? '✓ Complete!' : '✗ Failed';
-            startBtn.disabled = false;
-            stepBtn.disabled = true;
-            stopBtn.disabled = true;
-            render();
-            return;
+          if (data.error) throw new Error(data.error);
+          
+          currentResult = data.result || [];
+          cellsSpan.textContent = data.complete ? width * height : '?';
+          timeSpan.textContent = data.elapsed.toFixed(1);
+          statusSpan.textContent = data.complete ? '✓ Complete!' : '✗ Failed';
+          render();
+        } else {
+          // Streaming mode
+          const yieldEvery = speed;
+          const res = await fetch(`/api/solve?tileset=${tilesetName}&width=${width}&height=${height}&seed=${seed}&periodic=${periodic}&yieldEvery=${yieldEvery}`, {
+            signal: abortController.signal,
+          });
+          
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          
+          while (running) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop() || '';
+            
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.error) {
+                throw new Error(data.error);
+              }
+              
+              if (data.cellsResolved !== undefined) {
+                cellsSpan.textContent = data.cellsResolved;
+              }
+              if (data.elapsed !== undefined) {
+                timeSpan.textContent = data.elapsed.toFixed(1);
+              }
+              if (data.attempt !== undefined) {
+                attemptSpan.textContent = data.attempt + 1;
+              }
+              
+              // Update result on every message
+              if (data.result) {
+                currentResult = data.result;
+              }
+              
+              if (data.done) {
+                statusSpan.textContent = data.ok && data.complete ? '✓ Complete!' : '✗ Failed';
+                running = false;
+              }
+              
+              render();
+              
+              // Small delay for animation
+              if (!data.done && speed <= 10) {
+                await new Promise(r => setTimeout(r, 10));
+              }
+            }
           }
-          
-          cellsSpan.textContent = result.value.cellsResolved;
         }
-        
-        timeSpan.textContent = (performance.now() - startTime).toFixed(1);
-        render();
-        requestAnimationFrame(animate);
-      };
-      
-      requestAnimationFrame(animate);
-    }
-    
-    function step() {
-      if (!generator) {
-        const seed = parseInt(seedInput.value) || 12345;
-        initState();
-        startTime = performance.now();
-        generator = simulateWFC(seed);
-        stepBtn.disabled = false;
-        statusSpan.textContent = 'Stepping...';
+      } catch (e) {
+        if (e.name !== 'AbortError') {
+          errorDiv.textContent = `Error: ${e.message}`;
+          statusSpan.textContent = '✗ Error';
+        }
       }
       
-      const result = generator.next();
-      
-      if (result.value.done) {
-        const elapsed = performance.now() - startTime;
-        timeSpan.textContent = elapsed.toFixed(1);
-        statusSpan.textContent = result.value.ok ? '✓ Complete!' : '✗ Failed';
-        stepBtn.disabled = true;
-        generator = null;
-      } else {
-        cellsSpan.textContent = result.value.cellsResolved;
-        timeSpan.textContent = (performance.now() - startTime).toFixed(1);
-      }
-      
-      render();
+      running = false;
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
     }
     
     function stop() {
       running = false;
+      if (abortController) {
+        abortController.abort();
+        abortController = null;
+      }
       startBtn.disabled = false;
-      stepBtn.disabled = false;
       stopBtn.disabled = true;
       statusSpan.textContent = 'Stopped';
     }
     
     function reset() {
-      running = false;
-      generator = null;
-      startBtn.disabled = false;
-      stepBtn.disabled = false;
-      stopBtn.disabled = true;
-      initState();
+      stop();
+      currentResult = null;
+      initDisplay();
+    }
+    
+    function randomSeed() {
+      seedInput.value = Math.floor(Math.random() * 1000000);
     }
     
     startBtn.addEventListener('click', run);
-    stepBtn.addEventListener('click', step);
     stopBtn.addEventListener('click', stop);
     resetBtn.addEventListener('click', reset);
+    randomBtn.addEventListener('click', randomSeed);
     sizeSelect.addEventListener('change', reset);
     tilesetSelect.addEventListener('change', reset);
     
+    const compareBtn = document.getElementById('compare');
+    const canonicalContainer = document.getElementById('canonical-container');
+    const canonicalImg = document.getElementById('canonical-img');
+    
+    compareBtn.addEventListener('click', async () => {
+      compareBtn.disabled = true;
+      compareBtn.textContent = '⏳ Running mxgmn...';
+      canonicalContainer.style.display = 'block';
+      
+      const tilesetName = tilesetSelect.value;
+      const width = gridSize;
+      const height = gridSize;
+      const seed = parseInt(seedInput.value) || 12345;
+      const periodic = periodicInput.checked;
+      
+      // Map tileset to subset (for comparison)
+      const subsets = { Knots: 'Standard', Circuit: 'Turnless', Rooms: null };
+      const subset = subsets[tilesetName];
+      const subsetParam = subset ? `&subset=${subset}` : '';
+      
+      try {
+        const res = await fetch(`/api/canonical?tileset=${tilesetName}&width=${width}&height=${height}&seed=${seed}&periodic=${periodic}${subsetParam}`);
+        if (res.ok) {
+          const blob = await res.blob();
+          canonicalImg.src = URL.createObjectURL(blob);
+          canonicalImg.style.width = canvas.width + 'px';
+          canonicalImg.style.height = canvas.height + 'px';
+        } else {
+          const err = await res.json();
+          errorDiv.textContent = `Canonical error: ${err.error}`;
+        }
+      } catch (e) {
+        errorDiv.textContent = `Canonical error: ${e.message}`;
+      }
+      
+      compareBtn.disabled = false;
+      compareBtn.textContent = '📊 Compare with mxgmn';
+    });
+    
     // Initialize
-    initState();
+    loadTilesetInfo().then(initDisplay).catch(console.error);
   </script>
 </body>
 </html>
