@@ -404,3 +404,38 @@ Re-verified on committed: `bun run harness/success-rate.ts knots-dense-24 50` �
 Recommend: the loop should PIVOT to SPEED ideation (the unmet axis: circuit/rooms propagation wall; H5/H8/H15 all REVERTED with evidence that micro-trims on the decrement loop do not pay). No external bar left; propagation is the algorithmic wall.
 
 **Cost:** STEP1 stress (3 cases × N) + success-rate + 2	imes prove-harness + typecheck + doc edits + reverts + commit ~4min wall + harness runs. Honest negative result recorded.
+
+## Round 3 ideation pass — SPEED wall (circuit/rooms propagation) — iteration 5
+
+Trigger: STALL→IDEATE. Speed axis unmet (circuit 1.77x / rooms 1.87x vs 3x target);
+wall CONFIRMED — H5 (guard trim), H8 (entropy defer), H15 (watched literals) all
+REVERTED; AC-4 decrement loop near-optimal in pure JS. Success axis MAXED (H12:
+100% on committed + harder cases; H13 rejected). So ideate on the speed wall.
+
+Method: TRIZ (Altshuller) P.35 parameter-changes + P.1 segmentation + first-
+principles (question the entropy-selection assumption) + biomimicry (cache locality).
+Refused-obvious: the algorithmic rewrites already tried (H5/H15). The freshest
+angles attack the wall via CACHE and via the BAN-entropy cost (the 2nd-biggest
+cost), not via algorithmic rewrite of the decrement loop.
+
+Rejected (no-target / speed-cost), freed from the backlog:
+- H14, H17 (success): axis maxed by H12; no measurable target.
+- H19 (arena recycling): no backtracking landed (H13 rejected; H12 = restart).
+- H11 (wave-bitpack): HURTS hot-path access → rejected on SPEED grounds (speed>memory).
+  Compatible-narrowing sub-part split out as H23 (cache SPEED win).
+
+New candidates (IDEATION):
+- H23 compatible Int32→Uint8: counts are ≤T<256 for our tilesets (knots 9 / circuit
+  36 / rooms 28) → EXACT, no cap. 4x smaller compatible → 4x less cache pressure on
+  the propagation decrement loop (the 60-66% wall). Tier-1 (same counts = byte-id),
+  low-risk. THE freshest angle — attacks the wall via cache, which H5/H8/H15 missed.
+- H22 MRV selection (sumsOfOnes) instead of entropy: eliminates the per-ban Math.log
+  recompute (H8 sub-profile: biggest ban sub-cost ~8-12%) outright (H8 only tried
+  deferring = failed). Tier-2 (changes selection order); success covered by H12.
+- H24 fast-log bitcast approx: alternative to H22 if entropy selection worth keeping
+  (entropy only needs monotonic order for the heap → fast approx preserves it).
+- H25 spatially-biased selection: biomimicry (nucleation) — heap scatters picks
+  globally; spatial bias gives compatible/wave arrays better cache locality. Touches
+  the wall via cache, not algorithm.
+
+Next: implement H23 (highest payoff + lowest risk), then H22.
