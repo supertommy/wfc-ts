@@ -1328,3 +1328,33 @@ Per-observe CPU/GPU traffic + dispatch/readback cadence makes the hybrid GPU pat
 STOP the GPU build here. No Stage 3. Record the negative result plainly.
 
 All numbers real (no fab). Ran via bench script on 2026-06-25. Commit (src-optimized/webgpu/ + scripts/ + log only).
+
+## WebGPU persistent/full-GPU prototype (boundary crossing, Stage 3 attempt) [Phase 4c]
+
+**Date:** 2026-06-25
+**Prototype:** throwaway `scripts/webgpu-persistent-prototype.ts` (deleted post-experiment; no src/ or src-optimized/ edits)
+**Goal:** Full observe+propagate on GPU (MRV deterministic min-sums>1 +tie-i, weighted via GPU PRNG, bans, AC-4 worklist prop), using chunked unrolled command buffer (maxObs phases of select+observe + diam prop dispatches) + 1 submit + 1 final readback. Test if crossings collapse and if correct+fast vs JS.
+
+**Implemented (per boundary-probe de-risk):**
+- GPU buffers: wave/compat/sums/workA-B (atomic), weights, prop*, nei, prng, bestPacked, done.
+- Kernels (WG 64/1): reset best, select (atomicMin packed for MRV), reset work, doObserve (build wsum, mulberry f32 draw, weighted, ban+seed work+log sums), fused prop (with sums sub on claim).
+- Host: Exposed for state+prop tables, 1 big encoder with unrolled, submit, final map wave/sums/done.
+- Validate: harness/validate + prop-list crosscheck.
+- DET by 2x same seed.
+
+**Commands run:**
+  bun scripts/webgpu-persistent-prototype.ts
+  (also manual 1-step chksum match via CPU ban all-but-t0 +prop vs GPU 1-obs lowest)
+
+**Results (Apple M3 Max/Dawn, real; no fab):**
+- Single step (lowest-t observe at cell0 + prop): wave chksum matched CPU exactly (8821).
+- Full for circuit-16 seed0 (periodic, MRV): ran to doneFlag=1, all sums==live==1 (mismatch0), badCompat=0; DET (diffs=0); but 22 unlisted adj pairs (prop-list crosscheck=validate viol=22); time~62-79ms / ~9.3k disps vs CPU~3.2ms.
+- knots-16: similar, complete per GPU but 456 viol.
+- circuit-32: CPU seed0 incomplete; GPU "done" but invalid/unres.
+- 50k+ disps pattern from probe holds; no hang/deadlock; 1 final read ~67ms class.
+
+**Verdict:** 
+Chunked unrolled full-GPU loop (start upload, end 1 read) collapses crossings and runs without barrier hang for modest grids. Single-observe+prop correct. However full chaining produced "complete" (sums/wave 1s) but INVALID tilings (viol>0 on pairs not in prop lists). Root not depth (tried 128 diam same viol) nor sums drift (matched). Possible: observe select/apply not keeping arc-consistency over sequence, prng/fp in pick, or subtle worklist/pingpong state across obs. Strategy viable for perf (dispatch tax acceptable per probe) but this prototype did not achieve correct full-GPU WFC. Smallest decisive proof obtained (ran+clear metrics+invalid); full correct persistent kernel larger than throwaway scope. No change to shipped solver. Negative on immediate viability without more kernel work.
+
+All numbers from actual runs captured in session. Script left (then cleaned) per "commit only if clean".
+
