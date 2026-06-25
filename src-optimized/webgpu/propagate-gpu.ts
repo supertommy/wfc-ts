@@ -1,16 +1,17 @@
 /// <reference types="@webgpu/types" />
 
 // GPU propagation backend (Stage 1).
-// Ports the PROVEN fused parallel-AC-4 kernel + diameter-dispatch amortized-1-readback
-// loop from scripts/webgpu-prototype-v2.ts into a clean, typed, reusable module.
+// Ports the fused parallel-AC-4 kernel from scripts/webgpu-prototype-v2.ts into a
+// clean, typed, reusable module, with the later lockstep-proven safe cascade drain.
 //
 // - Constructor allocates GPU buffers + pipeline ONCE for a (tileset+grid+periodic) problem.
-// - propagate() uploads per-run wave/compatible state + seeds worklist, runs the fixed
-//   number of dispatches with ping-pong worklists, does ONE final readback, returns
-//   updated wave + compatible (as Uint8Arrays to match CPU narrow layout) + ok flag.
+// - propagate() uploads per-run wave/compatible state + seeds worklist, drains the
+//   ping-pong worklists to fixpoint with count sampling, then returns updated
+//   wave + compatible (as Uint8Arrays to match CPU narrow layout) + ok flag.
 // - Kernel and dispatch logic are bitwise mirrors of the v2 prototype (atomicSub prev==1
 //   CAS-claim + zero-4-compats + append). See CPU Model.propagate + ban for semantics.
-// - diameter = max(MX,MY) when periodic; MX+MY (safe manhattan bound) when not.
+// - max cascade bound is count*T bans (safe); earlier diameter bounds were disproven
+//   by chained weighted solves whose frontier stayed non-empty past grid diameter.
 // - The module is additive/opt-in: not imported by src-optimized/index.ts.
 // - Strict TS, plain WebGPU + JS, no debug code in the committed module.
 //
@@ -128,10 +129,12 @@ export interface GpuPropagatorData {
  * every propagate() call on this tileset/grid/periodic configuration.
  * Wave and compatible are per-run state (uploaded each call).
  *
- * The implementation ports the exact WGSL kernel and diameter-dispatch loop
- * from the proven v2 prototype. It matches CPU propagate() indexing, strides,
+ * The implementation ports the WGSL kernel from the v2 prototype, but uses the
+ * later lockstep-proven safe cascade drain instead of a geometric diameter bound.
+ * It matches CPU propagate() indexing, strides,
  * ban rule (prev==1 on atomicSub means the direction support just hit zero),
- * and worklist ping-pong. One final readback after all dispatches.
+ * and worklist ping-pong. Count sampling proves the frontier is empty before
+ * the final state readback.
  *
  * ok mirrors the CPU return value (sumsOfOnes[0] > 0 after prop), which is
  * "does cell 0 still have any options?" (see Model.propagate for exact contract).
@@ -144,7 +147,7 @@ export class GpuPropagator {
   private readonly MX: number;
   private readonly MY: number;
   private readonly periodic: boolean;
-  private readonly diameter: number;
+  private readonly maxCascadeSteps: number;
 
   private readonly pipeline: GPUComputePipeline;
 
@@ -187,7 +190,11 @@ export class GpuPropagator {
     this.MX = data.MX;
     this.MY = data.MY;
     this.periodic = data.periodic;
-    this.diameter = data.periodic ? Math.max(data.MX, data.MY) : (data.MX + data.MY);
+    // Safe upper bound: each successful frontier item represents a newly banned
+    // (cell,tile) option, and there are at most count*T such bans in a cascade.
+    // A geometric diameter bound is insufficient for chained WFC solves; support
+    // dependencies can keep producing frontier work beyond grid diameter.
+    this.maxCascadeSteps = data.count * data.T;
 
     const maxBans = data.count * data.T;
     this.workBufSize = (1 + 2 * maxBans) * 4;
@@ -319,9 +326,10 @@ export class GpuPropagator {
    * - Uploads the caller's wave + compatible (Uint8 narrow arrays from the CPU model).
    * - Compatible is widened to i32 on GPU only for atomic ops (converted back on return).
    * - Seeds the worklist from initialNewlyBanned (the "newly banned" that observe/ban pushed).
-   * - Dispatches the kernel exactly `diameter` times using ping-pong worklists (no
-   *   intermediate readbacks).
-   * - One final readback of wave + compatible + trailing work count.
+   * - Dispatches the kernel until the produced frontier is empty, capped at
+   *   count*T cascade steps (safe upper bound).
+   * - Final readback of wave + compatible + trailing work count after the
+   *   frontier-empty condition is observed.
    * - Returns copies as Uint8Arrays (matching CPU layout post H23/H26) + ok flag.
    *
    * The ban rule, indexing (T4, d*T+t1, i*T4 + t*4 + d, i*4 + d), and zeroing exactly
@@ -364,10 +372,14 @@ export class GpuPropagator {
     device.queue.writeBuffer(curBuf, 0, initData);
 
     const maxWgs = this.maxWorkgroups;
-    const diam = this.diameter;
+    const maxSteps = this.maxCascadeSteps;
 
-    // Diameter dispatches, ping-pong, no per-iter host sync
-    for (let it = 0; it < diam; it++) {
+    // Correctness-first cascade drain. Earlier prototypes used a geometric
+    // diameter dispatch count with no intermediate host sync; lockstep debugging
+    // found valid chained states whose frontier remains non-empty past diameter.
+    let curCount = nInit;
+    for (let it = 0; it < maxSteps; it++) {
+      if (curCount === 0) break;
       device.queue.writeBuffer(nxtBuf, 0, new Uint32Array([0]));
 
       const enc = device.createCommandEncoder();
@@ -395,9 +407,19 @@ export class GpuPropagator {
       const tmp = curBuf;
       curBuf = nxtBuf;
       nxtBuf = tmp;
+
+      const encCheck = device.createCommandEncoder();
+      encCheck.copyBufferToBuffer(curBuf, 0, this.countReadback, 0, 4);
+      device.queue.submit([encCheck.finish()]);
+      await this.countReadback.mapAsync(GPUMapMode.READ);
+      curCount = new Uint32Array(this.countReadback.getMappedRange())[0] >>> 0;
+      this.countReadback.unmap();
+    }
+    if (curCount !== 0) {
+      throw new Error(`GPU propagation did not drain within ${maxSteps} cascade steps (frontier=${curCount})`);
     }
 
-    // ONE final readback
+    // Final readback
     const encFinal = device.createCommandEncoder();
     encFinal.copyBufferToBuffer(waveBuf, 0, this.waveReadback, 0, waveBuf.size);
     encFinal.copyBufferToBuffer(compatBuf, 0, this.compatReadback, 0, compatBuf.size);
@@ -515,11 +537,11 @@ export class GpuPropagator {
     device.queue.writeBuffer(this.bannedLog, 0, new Uint32Array([0]));
 
     const maxWgs = this.maxWorkgroups;
-    const diam = this.diameter;
+    const maxSteps = this.maxCascadeSteps;
 
     // 3. Cascade loop with early stop on empty worklist
     let curCount = nInit;
-    for (let it = 0; it < diam; it++) {
+    for (let it = 0; it < maxSteps; it++) {
       if (curCount === 0) break; // previous check
       device.queue.writeBuffer(nxtBuf, 0, new Uint32Array([0]));
 
@@ -550,7 +572,7 @@ export class GpuPropagator {
       nxtBuf = tmp;
 
       // sample the *new* cur count (produced by this dispatch)
-      if ((it + 1) % sampleEvery === 0 || (it + 1) === diam) {
+      if ((it + 1) % sampleEvery === 0 || (it + 1) === maxSteps) {
         const encCheck = device.createCommandEncoder();
         encCheck.copyBufferToBuffer(curBuf, 0, this.countReadback, 0, 4);
         device.queue.submit([encCheck.finish()]);
@@ -561,6 +583,9 @@ export class GpuPropagator {
           break;
         }
       }
+    }
+    if (curCount !== 0) {
+      throw new Error(`GPU incremental propagation did not drain within ${maxSteps} cascade steps (frontier=${curCount})`);
     }
 
     // 4. Read only the bannedLog (O(#derived bans) traffic)

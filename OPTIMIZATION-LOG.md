@@ -1420,3 +1420,34 @@ bun run scripts/debug-gpu-lockstep.ts
 - knots-standard-16 parallel-select-lowest: completed 227 observes, 0 diffs.
 
 **Narrowing update:** parallel MRV selection via `atomicMin` is also not the Stage 3 fault, at least for the lowest-t observe sequence. Remaining suspects are now primarily (a) GPU PRNG/weighted-pick observe, or (b) no-readback chunked/persistent lifecycle (done flag, parity/reset, command order), not the AC-4 frontier propagation or atomicMin MRV selection by themselves.
+
+### Root cause found — geometric diameter is not a safe WFC propagation bound
+
+Extended lockstep with GPU-owned weighted observe (`parallelSelect` + WGSL mulberry-style f32 weighted pick). The GPU reports `(cell, keptTile)`; the CPU oracle applies that exact choice, then both states are compared.
+
+**Key failing reproduction before the fix:** with the old drain bound `max(MX,MY)`, `circuit-turnless-16-gpu-weighted` diverged at step 172. The frontier after 16 propagation layers was still non-empty:
+
+```text
+frontier=2->6->4->4->8->12->16->20->24->28->30->28->24->20->16->12->8
+first wave diff: cell=111 tile=35 cpu=0 gpu=1
+first sums diff: cell=111 cpu=0 gpu=1
+```
+
+That exactly explains Stage 3's invalid complete-looking outputs: the prototype advanced to later observes before AC-4 propagation had reached fixpoint, leaving unsupported options alive. A geometric grid-diameter bound is not a correctness bound for chained WFC support propagation; dependency cycles can keep producing frontier work beyond Manhattan/geometric distance.
+
+**Fix applied:** `src-optimized/webgpu/propagate-gpu.ts` now uses the safe cascade bound `count*T` (max number of distinct `(cell,tile)` bans) with early-stop count sampling, and throws if the frontier somehow remains non-empty after that bound. Comments were updated to remove the false diameter-safety claim.
+
+**After fix / safe debug drain:**
+- GPU-weighted circuit-turnless-16: state matched until a real CPU contradiction at step 172; the formerly too-deep frontier drained fully:
+  `2->6->4->4->8->12->16->20->24->28->30->28->24->20->16->12->8->4->1->0`.
+- GPU-weighted knots-standard-16: completed 235 observes, 0 diffs.
+- Full expanded lockstep summary PASS.
+
+**Verification run after module fix:**
+```bash
+bun run typecheck
+bun run scripts/gate-gpu-propagate.ts
+# prior expanded debugger run after safe drain: bun run scripts/debug-gpu-lockstep.ts => PASS
+```
+
+**Updated verdict:** atomic append, parallel MRV selection, GPU weighted observe, and `sumsOfOnes` maintenance are correct under a true fixpoint drain. The Stage 3 invalidity is best explained by the unsafe fixed-diameter no-readback propagation bound. For a future no-readback/chunked GPU solver, dispatching only grid-diameter layers is invalid; it needs either a safe upper bound (`count*T`, too many dispatches for perf) or a device-side convergence/indirect/persistent mechanism that proves frontier empty before the next observe.

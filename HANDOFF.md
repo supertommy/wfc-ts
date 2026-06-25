@@ -82,18 +82,19 @@ Latest post-compact progress:
 - Deterministic lowest-t lockstep PASS on circuit 8/16 and knots 8/16.
 - Parallel MRV `atomicMin` select + lowest-t observe PASS on circuit-16 and knots-16.
 - Forced-random lockstep PASS on circuit-16 seed0 and knots-16 seeds 0/12345.
-- Key finding: chained atomic-append AC-4 frontier propagation + sums are correct for full small-grid solves when observes are deterministic, parallel-selected, or CPU-forced random. Atomic append and parallel MRV selection are **not currently the proven fault**.
-- Lifecycle fact: after a cascade drains, the active/current frontier count is 0 but the inactive ping-pong buffer often has stale nonzero count. That is safe only if every observe phase resets/seeds a known buffer and starts from the matching parity.
+- GPU-owned weighted observe PASS under a true fixpoint drain.
+- Root cause found: the old fixed `diameter=max(MX,MY)` propagation bound is unsafe. `circuit-turnless-16-gpu-weighted` produced a cascade still non-empty after 16 layers at step 172; draining to fixpoint took 19 layers (`...->8->4->1->0`). This explains Stage 3 invalid complete-looking outputs: it observed again before propagation reached fixpoint.
+- `src-optimized/webgpu/propagate-gpu.ts` was fixed to use safe `count*T` max cascade steps with early-stop count sampling and non-drain throws.
+- Atomic append, parallel MRV selection, GPU weighted observe, and sums maintenance are correct under a true fixpoint drain. The remaining GPU design problem is performance/portability of proving frontier-empty without per-observe CPU readback.
 
 Recommended next technical step:
-1. Rebuild a **minimal persistent/chunked prototype** from the passing lockstep kernels, not from the deleted throwaway.
-2. Keep a readback/debug mode until it matches step-by-step.
-3. Add one GPU-owned feature at a time:
-   - GPU PRNG weighted pick,
-   - unrolled chunked no-readback execution.
-   Parallel MRV `atomicMin` select already passes in the debugger; only revisit if the persistent version diverges.
-4. Try to reproduce Stage 3 invalidity with the new infrastructure. If reproduced, compare the first divergent step.
-5. Only switch to scan/compact if a real atomic-append frontier lifecycle bug is proven.
+1. Do **not** use grid diameter as a no-readback propagation bound again. It is wrong.
+2. Decide the GPU research direction:
+   - correctness-first: keep per-iteration/periodic count sampling until frontier-empty (correct, but likely slow), or
+   - performance-first: design a device-side convergence/indirect/persistent mechanism so the GPU proves frontier-empty before observe without CPU readback, or
+   - pause GPU and return to OSS polish.
+3. If continuing GPU, rebuild the chunked prototype with the fixed safe-drain invariant and measure whether any convergence strategy can beat JS.
+4. Only switch to scan/compact if a real atomic-append frontier lifecycle bug is proven; current evidence says the fault was the unsafe bound.
 
 The pure-JS solver remains the shippable path. Treat GPU as a research branch until it passes
 VALID+DET on small grids and then crosses over on large heavy grids.

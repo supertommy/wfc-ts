@@ -37,6 +37,7 @@ class Exposed extends SimpleTiledModel {
   get wave_(): Uint8Array { return this.wave; }
   get compatible_(): Uint8Array | Uint16Array | Int32Array { return this.compatible; }
   get sumsOfOnes_(): Uint8Array | Uint16Array | Int32Array { return this.sumsOfOnes; }
+  get weights_(): Float64Array { return this.weights; }
   get propData_(): Uint8Array | Uint16Array | Int32Array { return this.propData; }
   get propStart_(): Uint16Array | Int32Array { return this.propStart; }
   get propLen_(): Uint8Array | Uint16Array | Int32Array { return this.propLen; }
@@ -302,6 +303,99 @@ fn main() {
 }
 `;
 
+const OBSERVE_SELECTED_WEIGHTED_WGSL = `
+@group(0) @binding(0) var<storage, read_write> wave: array<atomic<u32>>;
+@group(0) @binding(1) var<storage, read_write> compatible: array<atomic<i32>>;
+@group(0) @binding(2) var<storage, read_write> sums: array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read_write> work: array<atomic<u32>>;
+@group(0) @binding(4) var<storage, read_write> debug: array<atomic<u32>>;
+@group(0) @binding(5) var<uniform> params: vec4<u32>; // [T, T4, count, 0]
+@group(0) @binding(6) var<storage, read> best: array<u32>;
+@group(0) @binding(7) var<storage, read> weights: array<f32>;
+@group(0) @binding(8) var<storage, read_write> rng: array<u32>;
+
+fn mulberry32_next(seed: u32) -> u32 {
+  var z: u32 = seed + 0x6D2B79F5u;
+  z = (z ^ (z >> 15u)) * (z | 1u);
+  z = z ^ (z + ((z ^ (z >> 7u)) * (z | 61u)));
+  return z ^ (z >> 14u);
+}
+
+@compute @workgroup_size(1)
+fn main() {
+  let T: u32 = params[0];
+  let T4: u32 = params[1];
+  let packed: u32 = best[0];
+
+  atomicStore(&work[0], 0u);
+  atomicStore(&debug[0], 0u);
+  atomicStore(&debug[1], 0xffffffffu);
+  atomicStore(&debug[2], 0xffffffffu);
+  atomicStore(&debug[3], 0u);
+
+  if (packed == 0xffffffffu) {
+    return;
+  }
+
+  let cell: u32 = packed & 0x000fffffu;
+  let base: u32 = cell * T;
+
+  var total: f32 = 0.0;
+  var fallback: u32 = 0xffffffffu;
+  for (var t: u32 = 0u; t < T; t = t + 1u) {
+    if (atomicLoad(&wave[base + t]) == 1u) {
+      total = total + weights[t];
+      fallback = t;
+    }
+  }
+  if (fallback == 0xffffffffu || total <= 0.0) {
+    return;
+  }
+
+  let seed: u32 = rng[0];
+  let nextSeed: u32 = mulberry32_next(seed);
+  rng[0] = nextSeed;
+  let r: f32 = f32(nextSeed) / 4294967296.0;
+  let threshold: f32 = r * total;
+
+  var kept: u32 = fallback;
+  var acc: f32 = 0.0;
+  for (var t2: u32 = 0u; t2 < T; t2 = t2 + 1u) {
+    if (atomicLoad(&wave[base + t2]) == 1u) {
+      acc = acc + weights[t2];
+      if (threshold <= acc) {
+        kept = t2;
+        break;
+      }
+    }
+  }
+
+  var seedBans: u32 = 0u;
+  for (var t3: u32 = 0u; t3 < T; t3 = t3 + 1u) {
+    if (t3 == kept) { continue; }
+    let waddr: u32 = base + t3;
+    if (atomicLoad(&wave[waddr]) == 1u) {
+      atomicStore(&wave[waddr], 0u);
+      let cbase: u32 = cell * T4 + t3 * 4u;
+      atomicStore(&compatible[cbase + 0u], 0i);
+      atomicStore(&compatible[cbase + 1u], 0i);
+      atomicStore(&compatible[cbase + 2u], 0i);
+      atomicStore(&compatible[cbase + 3u], 0i);
+      atomicSub(&sums[cell], 1u);
+      let pos: u32 = atomicAdd(&work[0], 1u);
+      atomicStore(&work[1u + pos * 2u], cell);
+      atomicStore(&work[1u + pos * 2u + 1u], t3);
+      seedBans = seedBans + 1u;
+    }
+  }
+
+  atomicStore(&debug[0], 1u);
+  atomicStore(&debug[1], cell);
+  atomicStore(&debug[2], kept);
+  atomicStore(&debug[3], seedBans);
+}
+`;
+
 const PROPAGATE_WGSL = `
 @group(0) @binding(0) var<storage, read_write> wave: array<atomic<u32>>;
 @group(0) @binding(1) var<storage, read_write> compatible: array<atomic<i32>>;
@@ -430,13 +524,14 @@ class DebugGpuState {
   private readonly T4: number;
   private readonly count: number;
   private readonly maxWorkgroups: number;
-  private readonly diameter: number;
+  private readonly drainLimit: number;
   private readonly workBufSize: number;
 
   private readonly selectPipeline: GPUComputePipeline;
   private readonly resetBestPipeline: GPUComputePipeline;
   private readonly parallelSelectPipeline: GPUComputePipeline;
   private readonly observeSelectedPipeline: GPUComputePipeline;
+  private readonly observeWeightedPipeline: GPUComputePipeline;
   private readonly forcedPipeline: GPUComputePipeline;
   private readonly propPipeline: GPUComputePipeline;
   private readonly waveBuf: GPUBuffer;
@@ -447,6 +542,8 @@ class DebugGpuState {
   private readonly propDataBuf: GPUBuffer;
   private readonly propMetaBuf: GPUBuffer;
   private readonly neighborsBuf: GPUBuffer;
+  private readonly weightsBuf: GPUBuffer;
+  private readonly rngBuf: GPUBuffer;
   private readonly paramsBuf: GPUBuffer;
   private readonly observeParamsBuf: GPUBuffer;
   private readonly bestBuf: GPUBuffer;
@@ -464,7 +561,10 @@ class DebugGpuState {
     this.T4 = cpu.T4_;
     this.count = cpu.count_;
     this.maxWorkgroups = Math.ceil((this.count * this.T) / 64);
-    this.diameter = cpu.periodic_ ? Math.max(cpu.MX_, cpu.MY_) : (cpu.MX_ + cpu.MY_);
+    // Safe debug drain bound. Earlier prototypes used grid diameter as a fixed
+    // no-readback propagation bound, but chained weighted solves can have AC-4
+    // cascades deeper than geometric diameter. We still early-stop on empty.
+    this.drainLimit = this.count * this.T;
 
     const maxBans = this.count * this.T;
     this.workBufSize = (1 + 2 * maxBans) * 4;
@@ -486,6 +586,8 @@ class DebugGpuState {
     this.propDataBuf = this.createMappedBuffer(propDataU32, GPUBufferUsage.STORAGE);
     this.propMetaBuf = this.createMappedBuffer(propMetaU32, GPUBufferUsage.STORAGE);
     this.neighborsBuf = this.createMappedBuffer(new Int32Array(cpu.neighbors_), GPUBufferUsage.STORAGE);
+    this.weightsBuf = this.createMappedBuffer(new Float32Array(cpu.weights_), GPUBufferUsage.STORAGE);
+    this.rngBuf = this.createMappedBuffer(new Uint32Array([0x12345678]), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
 
     const params = new Uint32Array([this.T >>> 0, this.T4 >>> 0, this.count >>> 0, 0]);
     this.paramsBuf = this.createMappedBuffer(params, GPUBufferUsage.UNIFORM);
@@ -521,6 +623,10 @@ class DebugGpuState {
     this.observeSelectedPipeline = device.createComputePipeline({
       layout: "auto",
       compute: { module: device.createShaderModule({ code: OBSERVE_SELECTED_LOWEST_WGSL }), entryPoint: "main" },
+    });
+    this.observeWeightedPipeline = device.createComputePipeline({
+      layout: "auto",
+      compute: { module: device.createShaderModule({ code: OBSERVE_SELECTED_WEIGHTED_WGSL }), entryPoint: "main" },
     });
     this.forcedPipeline = device.createComputePipeline({
       layout: "auto",
@@ -639,6 +745,75 @@ class DebugGpuState {
     };
   }
 
+  async stepParallelSelectWeighted(): Promise<GpuStep> {
+    this.device.queue.writeBuffer(this.workA, 0, new Uint32Array([0]));
+    this.device.queue.writeBuffer(this.workB, 0, new Uint32Array([0]));
+    this.device.queue.writeBuffer(this.debugBuf, 0, new Uint32Array(4));
+
+    const encSelect = this.device.createCommandEncoder();
+    const resetBind = this.device.createBindGroup({
+      layout: this.resetBestPipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: this.bestBuf } }],
+    });
+    const resetPass = encSelect.beginComputePass();
+    resetPass.setPipeline(this.resetBestPipeline);
+    resetPass.setBindGroup(0, resetBind);
+    resetPass.dispatchWorkgroups(1);
+    resetPass.end();
+
+    const selectBind = this.device.createBindGroup({
+      layout: this.parallelSelectPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.sumsBuf } },
+        { binding: 1, resource: { buffer: this.bestBuf } },
+        { binding: 2, resource: { buffer: this.paramsBuf } },
+      ],
+    });
+    const selectPass = encSelect.beginComputePass();
+    selectPass.setPipeline(this.parallelSelectPipeline);
+    selectPass.setBindGroup(0, selectBind);
+    selectPass.dispatchWorkgroups(Math.ceil(this.count / 64));
+    selectPass.end();
+    this.device.queue.submit([encSelect.finish()]);
+
+    const encObserve = this.device.createCommandEncoder();
+    const observeBind = this.device.createBindGroup({
+      layout: this.observeWeightedPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.waveBuf } },
+        { binding: 1, resource: { buffer: this.compatBuf } },
+        { binding: 2, resource: { buffer: this.sumsBuf } },
+        { binding: 3, resource: { buffer: this.workA } },
+        { binding: 4, resource: { buffer: this.debugBuf } },
+        { binding: 5, resource: { buffer: this.paramsBuf } },
+        { binding: 6, resource: { buffer: this.bestBuf } },
+        { binding: 7, resource: { buffer: this.weightsBuf } },
+        { binding: 8, resource: { buffer: this.rngBuf } },
+      ],
+    });
+    const observePass = encObserve.beginComputePass();
+    observePass.setPipeline(this.observeWeightedPipeline);
+    observePass.setBindGroup(0, observeBind);
+    observePass.dispatchWorkgroups(1);
+    observePass.end();
+    this.device.queue.submit([encObserve.finish()]);
+
+    const debug = await this.readDebug();
+    if (debug[0] === 0) {
+      return { status: "complete", cell: -1, kept: -1, seedBans: 0, finalFrontierCount: 0, frontierCounts: [] };
+    }
+
+    const drained = await this.drainFrontier();
+    return {
+      status: "observe",
+      cell: debug[1] | 0,
+      kept: debug[2] | 0,
+      seedBans: debug[3] | 0,
+      finalFrontierCount: drained.finalFrontierCount,
+      frontierCounts: drained.frontierCounts,
+    };
+  }
+
   async stepForced(cell: number, kept: number): Promise<GpuStep> {
     this.device.queue.writeBuffer(this.workA, 0, new Uint32Array([0]));
     this.device.queue.writeBuffer(this.workB, 0, new Uint32Array([0]));
@@ -687,7 +862,7 @@ class DebugGpuState {
     let curCount = await this.readWorkCount(curBuf);
     const frontierCounts: number[] = [curCount];
 
-    for (let it = 0; it < this.diameter; it++) {
+    for (let it = 0; it < this.drainLimit; it++) {
       if (curCount === 0) break;
       this.device.queue.writeBuffer(nxtBuf, 0, new Uint32Array([0]));
 
@@ -754,9 +929,10 @@ class DebugGpuState {
     return { wave, compatible, sums, workA: counts[0] >>> 0, workB: counts[1] >>> 0 };
   }
 
-  private createMappedBuffer<T extends Uint32Array | Int32Array>(data: T, usage: GPUBufferUsageFlags): GPUBuffer {
+  private createMappedBuffer<T extends Uint32Array | Int32Array | Float32Array>(data: T, usage: GPUBufferUsageFlags): GPUBuffer {
     const buffer = this.device.createBuffer({ size: data.byteLength, usage, mappedAtCreation: true });
     if (data instanceof Int32Array) new Int32Array(buffer.getMappedRange()).set(data);
+    else if (data instanceof Float32Array) new Float32Array(buffer.getMappedRange()).set(data);
     else new Uint32Array(buffer.getMappedRange()).set(data);
     buffer.unmap();
     return buffer;
@@ -885,7 +1061,7 @@ async function runCase(device: GPUDevice, tileset: Tileset, subsetName: string, 
       if (diff.waveDiffs > 0) console.error(`first wave diff: ${describeWaveIndex(cpu, diff.firstWaveDiff)} gpu=${snap.wave[diff.firstWaveDiff]}`);
       if (diff.sumsDiffs > 0) console.error(`first sums diff: ${describeSumsIndex(cpu, snap, diff.firstSumsDiff)}`);
       if (diff.liveCompatDiffs > 0) console.error(`first live compatible diff: ${describeCompatIndex(cpu, snap, diff.firstLiveCompatDiff)}`);
-      if (notDrained) console.error(`propagation did not drain within diameter; final frontier=${gpuStep.finalFrontierCount}`);
+      if (notDrained) console.error(`propagation did not drain within debug bound; final frontier=${gpuStep.finalFrontierCount}`);
       return false;
     }
 
@@ -937,7 +1113,7 @@ async function runCaseParallelSelect(device: GPUDevice, tileset: Tileset, subset
       if (diff.waveDiffs > 0) console.error(`first wave diff: ${describeWaveIndex(cpu, diff.firstWaveDiff)} gpu=${snap.wave[diff.firstWaveDiff]}`);
       if (diff.sumsDiffs > 0) console.error(`first sums diff: ${describeSumsIndex(cpu, snap, diff.firstSumsDiff)}`);
       if (diff.liveCompatDiffs > 0) console.error(`first live compatible diff: ${describeCompatIndex(cpu, snap, diff.firstLiveCompatDiff)}`);
-      if (notDrained) console.error(`propagation did not drain within diameter; final frontier=${gpuStep.finalFrontierCount}`);
+      if (notDrained) console.error(`propagation did not drain within debug bound; final frontier=${gpuStep.finalFrontierCount}`);
       return false;
     }
 
@@ -1009,10 +1185,79 @@ async function runCaseForcedRandom(
       if (diff.waveDiffs > 0) console.error(`first wave diff: ${describeWaveIndex(cpu, diff.firstWaveDiff)} gpu=${snap.wave[diff.firstWaveDiff]}`);
       if (diff.sumsDiffs > 0) console.error(`first sums diff: ${describeSumsIndex(cpu, snap, diff.firstSumsDiff)}`);
       if (diff.liveCompatDiffs > 0) console.error(`first live compatible diff: ${describeCompatIndex(cpu, snap, diff.firstLiveCompatDiff)}`);
-      if (notDrained) console.error(`propagation did not drain within diameter; final frontier=${gpuStep.finalFrontierCount}`);
+      if (notDrained) console.error(`propagation did not drain within debug bound; final frontier=${gpuStep.finalFrontierCount}`);
       return false;
     }
 
+    if (cpuStep.status === "contradiction") {
+      console.log(`PASS ${label}: CPU contradiction matched state through step ${step}; stopping debug case.`);
+      return true;
+    }
+  }
+
+  console.log(`PASS ${label}: no divergence through ${maxSteps} observes (case still incomplete).`);
+  return true;
+}
+
+async function runCaseGpuWeighted(device: GPUDevice, tileset: Tileset, subsetName: string, size: number, maxSteps: number): Promise<boolean> {
+  const label = `${tileset.name}-${subsetName}-${size}-gpu-weighted`;
+  console.log(`\n=== LOCKSTEP ${label} ===`);
+  const cpu = new Exposed({ tileset, subsetName, width: size, height: size, periodic: true, heuristic: Heuristic.MRV });
+  if (cpu.count_ === 0) cpu.init_();
+  cpu.clear_();
+  const gpu = new DebugGpuState(device, cpu);
+
+  for (let step = 1; step <= maxSteps; step++) {
+    const cpuSelected = selectLowestMrv(cpu);
+    const gpuStep = await gpu.stepParallelSelectWeighted();
+
+    let cpuStep: CpuStep;
+    if (!cpuSelected) {
+      cpuStep = { status: "complete", cell: -1, kept: -1, seedBans: 0, ok: true };
+    } else if (gpuStep.status === "complete") {
+      cpuStep = { status: "observe", cell: cpuSelected.cell, kept: cpuSelected.kept, seedBans: -1, ok: false };
+    } else {
+      const widx = gpuStep.cell * cpu.T_ + gpuStep.kept;
+      if (gpuStep.cell !== cpuSelected.cell || gpuStep.kept < 0 || gpuStep.kept >= cpu.T_ || cpu.wave_[widx] !== 1) {
+        const snap = await gpu.snapshot();
+        console.error(`\nDIVERGENCE in ${label} at step ${step}: GPU chose non-live/wrong cell. cpuSelected=${JSON.stringify(cpuSelected)} gpu=${JSON.stringify(gpuStep)}`);
+        console.error(`diff context workA=${snap.workA} workB=${snap.workB}`);
+        return false;
+      }
+      cpuStep = applyCpuObserveAndPropagate(cpu, gpuStep.cell, gpuStep.kept);
+    }
+
+    const snap = await gpu.snapshot();
+    const diff = compare(cpu, snap);
+    const statusCompatible = cpuStep.status === gpuStep.status || (cpuStep.status === "contradiction" && gpuStep.status === "observe");
+    const selectionMismatch = !statusCompatible || cpuStep.cell !== gpuStep.cell || cpuStep.kept !== gpuStep.kept || cpuStep.seedBans !== gpuStep.seedBans;
+    const stateMismatch = diff.waveDiffs > 0 || diff.sumsDiffs > 0 || diff.liveCompatDiffs > 0;
+    const notDrained = gpuStep.finalFrontierCount !== 0;
+
+    if (step <= 5 || selectionMismatch || stateMismatch || notDrained || cpuStep.status !== "observe") {
+      console.log(
+        `step=${step} cpu=${cpuStep.status}(${cpuStep.cell}, keep=${cpuStep.kept}, bans=${cpuStep.seedBans}) ` +
+        `gpu=${gpuStep.status}(${gpuStep.cell}, keep=${gpuStep.kept}, bans=${gpuStep.seedBans}) ` +
+        `frontier=${gpuStep.frontierCounts.join("->") || "-"} ` +
+        `diffs wave=${diff.waveDiffs} sums=${diff.sumsDiffs} liveCompat=${diff.liveCompatDiffs} ` +
+        `workA=${snap.workA} workB=${snap.workB}`
+      );
+    }
+
+    if (selectionMismatch || stateMismatch || notDrained) {
+      console.error(`\nDIVERGENCE in ${label} at step ${step}`);
+      if (selectionMismatch) console.error(`selection mismatch: CPU ${JSON.stringify(cpuStep)} GPU ${JSON.stringify(gpuStep)}`);
+      if (diff.waveDiffs > 0) console.error(`first wave diff: ${describeWaveIndex(cpu, diff.firstWaveDiff)} gpu=${snap.wave[diff.firstWaveDiff]}`);
+      if (diff.sumsDiffs > 0) console.error(`first sums diff: ${describeSumsIndex(cpu, snap, diff.firstSumsDiff)}`);
+      if (diff.liveCompatDiffs > 0) console.error(`first live compatible diff: ${describeCompatIndex(cpu, snap, diff.firstLiveCompatDiff)}`);
+      if (notDrained) console.error(`propagation did not drain within debug bound; final frontier=${gpuStep.finalFrontierCount}`);
+      return false;
+    }
+
+    if (cpuStep.status === "complete") {
+      console.log(`PASS ${label}: completed in ${step - 1} observes with no divergence.`);
+      return true;
+    }
     if (cpuStep.status === "contradiction") {
       console.log(`PASS ${label}: CPU contradiction matched state through step ${step}; stopping debug case.`);
       return true;
@@ -1055,6 +1300,18 @@ async function main(): Promise<void> {
     ];
     for (const [tileset, subset, size, maxSteps] of parallelCases) {
       const ok = await runCaseParallelSelect(device, tileset, subset, size, maxSteps);
+      allPass = allPass && ok;
+      if (!ok) break;
+    }
+  }
+
+  if (allPass) {
+    const weightedCases: Array<[Tileset, string, number, number]> = [
+      [circuit, "Turnless", 16, 512],
+      [knots, "Standard", 16, 512],
+    ];
+    for (const [tileset, subset, size, maxSteps] of weightedCases) {
+      const ok = await runCaseGpuWeighted(device, tileset, subset, size, maxSteps);
       allPass = allPass && ok;
       if (!ok) break;
     }
