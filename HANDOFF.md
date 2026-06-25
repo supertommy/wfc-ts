@@ -50,7 +50,71 @@ one collapse order and bad in another. Global tabu doesn't capture this.
 True checkpoint-based backtracking would work but adds significant complexity
 and memory overhead. The 72-74% success rate from LCV alone is acceptable.
 
-### Remaining Hypotheses (if pursuing >80%)
+### Remaining Hypotheses — TRY ALL IN RATCHET LOOP
+
+Goal: Maximize success rate on Summer 48×48 periodic (currently 72%).
+
+**H50: True checkpoint backtracking**
+- Save full state (wave, compatible, sumsOfOnes) before each observe
+- On contradiction, restore last checkpoint and ban the chosen tile
+- If still fails, restore earlier checkpoint
+- Limit depth to 5-10 checkpoints (memory bounded)
+- Expected: Large improvement, significant complexity
+
+**H51: Smarter MRV tiebreaker**  
+- When multiple cells have same sumsOfOnes, pick the one whose neighbors are most constrained
+- Should focus collapse on "tight" areas first
+- Expected: Moderate improvement
+
+**H52: Propagation order (most constrained first)**
+- Process cells in the propagation queue by sumsOfOnes (lowest first)
+- May help constraint propagation find contradictions earlier
+- Expected: Small improvement
+
+**H53: Restart diversity**
+- Instead of deriveRestartSeed(base, k), use completely different PRNG streams
+- Or: shuffle the initial cell selection order on restart
+- Expected: Moderate improvement for stubborn seeds
+
+**H54: Adaptive LCV strength**
+- Current: weight = baseWeight * (1 + freedom)
+- Try: weight = baseWeight * (1 + freedom)^2 (stronger bias)
+- Or: weight = baseWeight * freedom (only freedom matters)
+- Expected: May help or hurt, needs testing
+
+**H55: Lookahead (arc consistency check before commit)**
+- Before committing to a tile, simulate: would any neighbor have 0 options?
+- Skip tiles that immediately cause contradiction
+- Expected: Moderate improvement, adds per-observe cost
+
+### Ratchet Protocol
+
+```bash
+# Baseline
+bun run harness/success-rate-sweep.ts --tileset Summer --size 48 --seeds 100 --periodic
+
+# Gate: must remain VALID+DET
+bun run harness/prove-harness.ts
+
+# Speed gate: must not regress >20%
+bun run harness/prove-harness.ts  # check optMs column
+```
+
+Keep if: success_rate > baseline AND speed <= 1.2x baseline
+
+### Current Baseline (H46 LCV only)
+
+- **Success: 72/100 (72.0%)**
+- **Avg time: 174.55ms**
+- Gate: VALID+DET passing
+
+### Attack Order (recommended)
+
+1. H55 (lookahead) — cheapest correctness improvement
+2. H51 (MRV tiebreaker) — simple change
+3. H54 (adaptive LCV) — tune existing heuristic  
+4. H50 (checkpoint backtracking) — most complex, save for last
+5. H53 (restart diversity) — if still needed
 
 ### Files to Create
 
