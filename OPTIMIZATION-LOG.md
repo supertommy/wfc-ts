@@ -1689,3 +1689,35 @@ circuit-turnless       |  128 |  8256 |    7 |     1 |     775 |     740 |   0.0
 Decision: REJECT as a promotion candidate. Correctness passed (`diffs=0`) on every tested case, so the support-mask direction semantics are sound. Performance did not. On the propagation-bound targets, bitset core is ~2.1x slower than current AC-4 on circuit (`0.0801ms` vs `0.0380ms`) and ~2.5x slower on rooms (`0.0310ms` vs `0.0126ms`). Knots has too little propagation work for the bitset formulation to matter (`0.0242ms` vs current `0.0015ms`). The circuit-128 case shows the structural flaw: the cascade size is unchanged (740 removed), but bitset scans neighbor live tiles and seeds masks over the whole grid, so it scales with grid/state more than the current sparse stack.
 
 Learning: dirty-cell domain filtering is correct but over-scans for these simple-tiled cascades. The current AC-4 decrement loop wins because the frontier is sparse and each banned tile touches only short CSR lists. The next Round 4 candidate should keep AC-4 counts but change only batching/unit-of-work: H38 cell-batched AC-4, using the actual newly banned tile lists per cell to avoid repeated neighbor setup without scanning every live neighbor tile.
+
+## Hypothesis H38 — cell-batched AC-4 propagation [REJECTED]
+
+Hypothesis: keep AC-4 support counts, but batch propagation by dirty cell instead of popping one `(cell,tile)` at a time. A cell that loses many tiles pays neighbor lookup and neighbor-base setup once per direction, then processes all pending banned tiles for that cell. This should capture the plausible coalescing win from H37 without scanning whole neighbor domains.
+
+Change: added script-local prototype `scripts/cpu-batched-ac4-proto.ts` only. The shippable optimized solver is untouched. The prototype:
+- snapshots the initial observe-created stack into per-cell pending tile bitsets;
+- drains a queue of dirty cells, extracts pending tiles into a reusable tile buffer, then performs the exact same `--compatible[cidx] === 0 -> ban` AC-4 transition;
+- zeroes compatible slots on ban, marks the newly banned tile pending for that cell, and re-enqueues the cell;
+- compares the final wave byte-for-byte against current optimized AC-4;
+- reports both an in-place drain-only timing (`batchDrain`, excluding reset like a promoted solver would) and clone/setup timings.
+
+Verification:
+
+```text
+bun run typecheck
+PASS
+
+bun run scripts/cpu-batched-ac4-proto.ts
+=== CPU H38 CELL-BATCHED AC-4 PROPAGATION PROTOTYPE ===
+median reps=200; cpuProp=current propagate only; batchDrain excludes reset like a promoted in-place solver; batchCore clones wave/compat; setup columns include observe bans
+case                   | size |  cell | keep | stack | bestBan | removed | cpuProp | cpuFull | batchDrain | batchCore | batchFull |  pops | banProc | changed | diffs | cpu
+-----------------------|------|-------|------|-------|---------|---------|---------|---------|------------|-----------|-----------|-------|---------|---------|-------|----
+knots-standard         |   48 |  1176 |    6 |     8 |      28 |      20 |   0.0016 |   0.0181 |     0.0021 |    0.0100 |     0.0256 |     5 |      28 |       4 |     0 | ok
+circuit-turnless       |   34 |   595 |    7 |    35 |     775 |     740 |   0.0387 |   0.0450 |     0.0469 |    0.0496 |     0.0575 |    72 |     775 |      82 |     0 | ok
+rooms                  |   30 |   465 |    0 |    27 |     395 |     368 |   0.0130 |   0.0173 |     0.0140 |    0.0250 |     0.0245 |    24 |     395 |      29 |     0 | ok
+circuit-turnless       |  128 |  8256 |    7 |    35 |     775 |     740 |   0.0398 |   0.1235 |     0.0453 |    0.0876 |     0.2424 |    72 |     775 |      82 |     0 | ok
+```
+
+Decision: REJECT as a promotion candidate. Correctness passed (`diffs=0`), so batching by cell can preserve AC-4 semantics. But the best fair column (`batchDrain`, in-place drain excluding reset/clone) is still slower on every target: knots `0.0021ms` vs `0.0016ms`, circuit `0.0469ms` vs `0.0387ms`, rooms `0.0140ms` vs `0.0130ms`, circuit-128 `0.0453ms` vs `0.0398ms`. The attempted saving (neighbor/base setup once per dirty cell+direction) is outweighed by pending-bit bookkeeping, queue/enqueued guards, extracting tile buffers, and less direct stack access.
+
+Learning: current LIFO `(cell,tile)` AC-4 stack is already the cheaper representation for these sparse cascades. H37 showed recomputing support over-scans; H38 shows coalescing AC-4 bans by cell adds more bookkeeping than it removes. Next Round 4 candidate: H39 generated/specialized hot propagation kernel. It should test whether the remaining cost is JS genericity/polymorphism rather than algorithmic queue shape.
