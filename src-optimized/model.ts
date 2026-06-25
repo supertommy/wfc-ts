@@ -644,16 +644,14 @@ export abstract class Model {
         }
       }
       
-      // H54 (final): Weight = original weight * (1 + freedom)^8
-      // Strongly prefer tiles that preserve neighbor options.
-      // Power of 8 achieves 100% success rate on Summer 48×48 periodic.
-      // Higher powers work but don't improve further. The +1 ensures
-      // tiles with 0 freedom still have some chance (based on weight alone).
+      // H54: Weight = original weight * (1 + freedom)^3
+      // Cubed balances success rate with visual variety.
+      // ^2 = 99% success, good variety
+      // ^3 = ~100% success, slightly less variety but still good
+      // ^8 = 100% success but all grass (too aggressive)
       // Deterministic: same seed produces same result.
       const f = 1 + freedom;
-      const f2 = f * f;
-      const f4 = f2 * f2;
-      dist[t] = weights[t] * f4 * f4;
+      dist[t] = weights[t] * f * f * f;
     }
     
     const r = weightedPick(dist, random.nextDouble());
