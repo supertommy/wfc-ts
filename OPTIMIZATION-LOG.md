@@ -1658,3 +1658,34 @@ Final GPU ratchet verdict: stop. We tested the plausible no-spin WebGPU shapes:
 5. indirect frontier dispatch: fixes over-dispatch, still far slower than CPU and does not solve full-run observe structure.
 
 The shippable path should remain the optimized pure-JS solver. Keep WebGPU artifacts as research/prototypes only. Resume Phase 4c OSS polish next: generalization checks, visualizer, learning guide, packaging, README/external benchmark refresh.
+
+## Hypothesis H37 — dirty-cell + bitset support propagation [REJECTED]
+
+Hypothesis: replace tile-ban AC-4 propagation with a dirty-cell bitset formulation. Instead of popping `(cell,tile)` bans and decrementing support counts, keep a bitset domain per cell, enqueue cells whose domain changed, and for each neighbor tile recompute support with `waveMask[dirtyCell] & supportMask[d,tile]`. This should coalesce many bans from the same cell and replace decrement writes with word intersections.
+
+Change: added script-local prototype `scripts/cpu-bitset-propagation-proto.ts` only. The shippable optimized solver is untouched. The prototype:
+- builds `supportMasks[(d*T+t2),lane]` from the existing CSR propagator so direction semantics mirror current AC-4;
+- chooses a strong center observe-like trigger by testing all kept tiles and selecting the largest cascade;
+- compares the final wave byte-for-byte against current optimized AC-4;
+- reports current AC-4 pure `propagate()` time, current setup+propagate time, bitset core time, and prototype setup+bitset time.
+
+Verification:
+
+```text
+bun run typecheck
+PASS
+
+bun run scripts/cpu-bitset-propagation-proto.ts
+=== CPU H37 DIRTY-CELL BITSET PROPAGATION PROTOTYPE ===
+median reps=200; cpuProp is current AC-4 propagate only; cpuSetup/bitSetup include observe/setup; bitCore includes prototype mask seeding + propagation
+case                   | size |  cell | keep | dirty | bestBan | removed | cpuProp | cpuSetup | bit core | bit+setup ms |  pops | changed | removed | diffs | cpu
+-----------------------|------|-------|------|-------|---------|---------|---------|----------|----------|--------------|-------|---------|---------|-------|----
+knots-standard         |   48 |  1176 |    6 |     1 |      28 |      20 |   0.0015 |    0.0177 |     0.0242 |       0.0361 |     5 |       4 |      20 |     0 | ok
+circuit-turnless       |   34 |   595 |    7 |     1 |     775 |     740 |   0.0380 |    0.0442 |     0.0801 |       0.0720 |    72 |      82 |     740 |     0 | ok
+rooms                  |   30 |   465 |    0 |     1 |     395 |     368 |   0.0126 |    0.0168 |     0.0310 |       0.0359 |    24 |      29 |     368 |     0 | ok
+circuit-turnless       |  128 |  8256 |    7 |     1 |     775 |     740 |   0.0380 |    0.1139 |     0.6410 |       0.7238 |    72 |      82 |     740 |     0 | ok
+```
+
+Decision: REJECT as a promotion candidate. Correctness passed (`diffs=0`) on every tested case, so the support-mask direction semantics are sound. Performance did not. On the propagation-bound targets, bitset core is ~2.1x slower than current AC-4 on circuit (`0.0801ms` vs `0.0380ms`) and ~2.5x slower on rooms (`0.0310ms` vs `0.0126ms`). Knots has too little propagation work for the bitset formulation to matter (`0.0242ms` vs current `0.0015ms`). The circuit-128 case shows the structural flaw: the cascade size is unchanged (740 removed), but bitset scans neighbor live tiles and seeds masks over the whole grid, so it scales with grid/state more than the current sparse stack.
+
+Learning: dirty-cell domain filtering is correct but over-scans for these simple-tiled cascades. The current AC-4 decrement loop wins because the frontier is sparse and each banned tile touches only short CSR lists. The next Round 4 candidate should keep AC-4 counts but change only batching/unit-of-work: H38 cell-batched AC-4, using the actual newly banned tile lists per cell to avoid repeated neighbor setup without scanning every live neighbor tile.
