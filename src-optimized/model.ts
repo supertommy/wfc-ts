@@ -396,11 +396,18 @@ export abstract class Model {
     this.stacksize++;
 
     this.sumsOfOnes[i] -= 1;
-    this.sumsOfWeights[i] -= this.weights[t];
-    this.sumsOfWeightLogWeights[i] -= this.weightLogWeights[t];
+    // H22: sumsOfWeights / sumsOfWeightLogWeights / entropies (the Math.log(plogp) recompute)
+    // are ONLY needed for Heuristic.Entropy selection. Under default MRV we use sumsOfOnes
+    // for the heap priority; guard to eliminate the per-ban log cost entirely (was ~8-12%
+    // of ban in H8 subprof). sumsOfOnes and the H6 dirty-mark MUST always run (MRV uses them).
+    // weights[]/weightLogWeights[] stay allocated (observe() builds dist from wave+weights).
+    if (this.heuristic === Heuristic.Entropy) {
+      this.sumsOfWeights[i] -= this.weights[t];
+      this.sumsOfWeightLogWeights[i] -= this.weightLogWeights[t];
 
-    const sum = this.sumsOfWeights[i];
-    this.entropies[i] = Math.log(sum) - this.sumsOfWeightLogWeights[i] / sum;
+      const sum = this.sumsOfWeights[i];
+      this.entropies[i] = Math.log(sum) - this.sumsOfWeightLogWeights[i] / sum;
+    }
 
     // H6: mark cell dirty for *batched* heap update (coalesces multiple bans to same cell
     // into a single decrease-key/remove). No per-ban sift cost. Flush applies before next extract.

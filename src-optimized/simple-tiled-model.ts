@@ -55,7 +55,7 @@ export class SimpleTiledModel extends Model {
   readonly tilenames: string[] = [];
 
   constructor(opts: SimpleTiledModelOptions) {
-    super(opts.width, opts.height, 1, opts.periodic, opts.heuristic ?? Heuristic.Entropy);
+    super(opts.width, opts.height, 1, opts.periodic, opts.heuristic ?? Heuristic.MRV);
 
     const { tileset, subsetName } = opts;
 

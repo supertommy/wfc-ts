@@ -56,7 +56,7 @@ informational. See `prompts/optimize-one.md`.
 | H19 | arena recycling (reuse collapsed-cell wave space for active watch/undo buffers) | 2 | memory (bounded under backtracking) | REJECTED | no backtracking landed (H13 rejected; H12 is restart-based, no undo stack) → arena recycling has no target. |
 | H20 | multi-resolution / nested-doll WFC (coarsen 2x2→1 macro-cell, then refine) | 2 | memory + speed (huge grids) | TODO | stretch; needs macro-tileset preprocessing; changes outputs. |
 | H21 | WebGPU propagation acceleration (optional path; portable JS fallback mandatory) | 2 | speed | TODO | stretch; only if H22/H24/H25 don't reach the target. MUST keep plain-JS path working in Node+browser. |
-| H22 | MRV selection (sumsOfOnes) instead of entropy — eliminate the per-ban Math.log recompute entirely | 2 (valid+det) | speed (ban entropy cost ~8-12%) | TODO | IDEATION: H8 sub-profile showed entropy/plogp Math.log is the biggest ban sub-cost; H8 only tried deferring (failed). MRV removes it outright. Tradeoff: changes selection order (Tier-2); success covered by H12 restart. Buildable, low-risk. |
+| H22 | MRV selection (sumsOfOnes) instead of entropy — eliminate the per-ban Math.log recompute entirely | 2 (valid+det) | speed (ban entropy cost ~8-12%) | KEPT | default MRV (from Entropy); ban() entropy work (sums+Math.log) now guarded `if (Entropy)`. Tier-2 (select order changes); knots 1.725→1.695ms (no reg), circuit 4.032→3.650ms (+9.5%), rooms 1.885→1.784ms (+5%); dense success 100%→100%; mem ~unchanged; VALID+DET; See log. |
 | H23 | compatible Int32 → Uint8 (counts are ≤T<256 for our tilesets, exact — no cap) | 1 (byte-id) | speed (propagation decrement loop — the 60-66% wall, via 4x cache reduction) | KEPT | Uint8 (maxPropLen=5/14/8 for knots/circuit/rooms); knots 1.791→1.728ms (no reg), circuit 4.358→4.037ms (+7.4%), rooms 1.965→1.898ms (+3.4%); mem -498kB/-1.0MB/-604kB; VALID+DET (byte-id); Tier-1 cache win on wall. See log. |
 | H24 | fast-log bitcast approximation (replace Math.log with bitcast log2 ~5-10x faster) | 2 (valid+det) | speed (ban entropy cost) | TODO | IDEATION alternative to H22 if entropy selection is worth keeping — entropy only needs monotonic order for the heap, so a fast approx preserves it closely. Tier-2 (slight order drift). |
 | H25 | spatially-biased selection (among min-entropy cells, pick nearest last-collapsed) | 2 (valid+det) | speed (propagation cache locality) | TODO | IDEATION/biomimicry (crystal nucleation): the heap scatters picks globally → propagation ripples back and forth; spatial bias gives the compatible/wave arrays better cache locality. Touches the wall via cache, not algorithm. Stretch; measure. |
@@ -180,10 +180,10 @@ is REVERTED. A speed win that costs memory is KEPT.
 3. H12 restart-with-derived-seeds — KEPT (100% on dense+harder cases w/ ~0 retries); success axis MET. (H13 CDCL rejected: no target on harder cases.)
 4. H14/H17 success refinements — REJECTED (success axis maxed, no target).
 5. **H23 compatible→Uint8 — KEPT** (cache win: circuit +7%, rooms +3.4%, knots held; all Uint8; VALID+DET byte-id).
-6. **H22 MRV selection** (IDEATION: eliminate the per-ban Math.log, ~8-12% ban cost; Tier-2, low-risk).
+6. **H22 MRV selection — KEPT** (elim per-ban Math.log via MRV default+guard; circuit +9.5%, rooms +5%, knots held; VALID+DET).
 7. H24 fast-log approx / H25 spatial-biased selection — IDEATION alternatives (ban cost / cache locality).
 8. H16 steppable run loop — web-ecosystem robustness (needed for "best on web").
-9. H21 WebGPU — stretch speed path only if H22/H24/H25 don't reach the target.
+9. H21 WebGPU — stretch speed path only if H24/H25 don't reach the target.
 10. Memory candidates (H18 sparse, H20 multi-res) — last; only if speed-neutral-or-better. (H11 wave-bitpack, H19 arena REJECTED: speed-cost / no-target.)
 
 **Round 3 target:** push circuit-turnless-34 and rooms-30 speedup vs reference
@@ -201,7 +201,12 @@ REJECT without impl; pivot recommendation to SPEED ideation on propagation (the 
 Uint8Array (maxPropLen 5/14/8 <<256). Speed: circuit 4.358→4.037ms (+7.4% on the wall),
 rooms +3.4%, knots no-reg (slight gain). Mem shrinks ~half for large inputs (compat+0 is
 now 1B/entry vs 4B). VALID+DET + byte-id (Tier-1). First cache-layout win on prop wall.
-Next candidate per README: H22 (MRV to kill per-ban log).
+
+**Post-H22 (this iteration):** H22 (MRV) KEPT. Switched default to MRV + guarded the entropy sums+Math.log
+recompute in ban() (skipped when heuristic != Entropy). Speed win on ban path: circuit 4.032→3.650ms
+(+9.5%), rooms 1.885→1.784ms (+5.4%), knots 1.725→1.695 (no reg, slight gain). Success 100% dense
+unchanged (H12 covers). Mem neutral (left H10 snapshots as-is). VALID+DET. Tier-2 (order change).
+Now propagation remains the wall; next candidates H24/H25 for further. Round 3 speed target still open.
 
 ## Exit criteria (the orchestrator checks each loop turn)
 

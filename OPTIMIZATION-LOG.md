@@ -499,3 +499,30 @@ typecheck ×many + edit + log/readme + commit ~15min wall + harness runs.
 
 Next candidate recommended: H22 (MRV selection — eliminate the per-ban Math.log
 recompute that was the largest ban sub-cost in prior profiles).
+
+## Hypothesis 22 — MRV selection (sumsOfOnes) instead of entropy — eliminate the per-ban Math.log [KEPT]
+
+**Hypothesis:** H8 sub-profile showed the per-ban entropy recompute (`Math.log(sum) - sumsOfWeightLogWeights[i]/sum` plus the two sums updates) was the biggest slice of ban time (~8-12% overall on circuit/rooms). H8 only tried *deferring* the log to flush (coalesce), which netted 0 (work just moved). H22 *eliminates* the work: switch default selection from Entropy to MRV (min-remaining-values = fewest live options via sumsOfOnes), which the heap already supported (`heuristic === Entropy ? entropies[i] : sumsOfOnes[i]`). Guard the three entropy-update lines in ban() behind `if (this.heuristic === Heuristic.Entropy)`. sumsOfOnes -=1 and H6 dirty-mark always run. observe() untouched (still uses weights[] for weighted pick). Tier-2 (collapse order changes vs Entropy; compare* already FAIL from H4). Success covered by H12 restarts. Priority SPEED: expect ban-path win especially on high-T high-ban (circuit).
+
+**Change:** Two files, one hypothesis. `src-optimized/simple-tiled-model.ts`: ctor default `opts.heuristic ?? Heuristic.MRV` (was Entropy; ref `src/` keeps Entropy — Tier-2 ok). `src-optimized/model.ts`: in ban(), sumsOfOnes+dirty always, the sumsOfWeights/WeightLog + entropies=Math.log only under `if (heuristic === Entropy)`. H10 snapshots left as-is (correct, minor waste under MRV; restore produces valid start state). No other files, no debug, plain TS. (H22 implements exactly the spec in task + README.)
+
+**Gate + Measure (followed optimize-one.md exactly):**
+- `npx tsc --noEmit` clean (strict) before/after.
+- `bun run harness/prove-harness.ts`: VALID+DET (viol=0) pre+post; DET re-runs identical checksums (new order but deterministic). compare* FAIL unchanged (Tier-2).
+- SPEED (primary; `harness/measure-speedup.ts` median-of-5; before via `git stash` of clean post-H23, after on patch; same machine):
+
+| input               | ref ms | opt-before | opt-after | speedup-b | speedup-a |
+|---------------------|--------|------------|-----------|-----------|-----------|
+| knots-standard-48   | ~10.6-11.3 | 1.725 ms | 1.695 ms | 6.12x | 6.66x |
+| circuit-turnless-34 | ~7.2   | 4.032 ms | 3.650 ms | 1.78x | 1.97x |
+| rooms-30            | ~3.3   | 1.885 ms | 1.784 ms | 1.76x | 1.85x |
+
+  Real above-noise gain on circuit (~9.5%, 0.38ms drop); rooms +5.4% (0.1ms); knots no regression (slight gain). Ban-path win as predicted (Math.log gone); circuit (T=36) gained most.
+- SUCCESS (must not tank): `bun run harness/success-rate.ts knots-dense-24 100` → 100% both before and after. Also checked knots-standard-24 (20) and rooms-30 (20): 100% no reg.
+- MEMORY (`harness/memory.ts`): unchanged at 636/996/618 KB (left H10 cache snapshots; arrays stay allocated for observe weights path).
+
+**Decision:** KEEP (committed). Meets *exact* keep criteria for Round 3 SPEED candidate: VALID+DET mandatory; knots-48 does not regress; *real* above-noise speed gain on circuit (primary target) AND rooms; dense success stays 100% (>>95%, no success-axis break). Memory neutral. H22 succeeds where H8 failed because it removes work rather than moving it. Tier-2 note: MRV changes selection (fail-fast most-constrained) vs weighted-entropy; outputs differ but valid+det; H12 restart covers robustness.
+
+**Cost:** stash/checkout dance + 3×(5+5) measure + 2×prove + success100 + success checks + mem + typechecks + edit + log/readme + commit ~12min wall + harness runs.
+
+Next candidate recommended: H24 (fast-log approx, if we ever want Entropy back) or H25 (spatial bias for prop cache locality on the remaining wall). Rank H24/H25 by re-profile on current (ban cost now gone, prop still ~60%+). H16 steppable also valuable for web but lower speed payoff.
