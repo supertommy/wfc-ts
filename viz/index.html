@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>wfc-ts Visualizer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 1rem;
+      color: #fff;
+    }
+    .controls {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    select, button, input {
+      padding: 0.5rem 1rem;
+      border: none;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    select {
+      background: #2d2d44;
+      color: #fff;
+    }
+    button {
+      background: #4a4a6a;
+      color: #fff;
+      transition: background 0.2s;
+    }
+    button:hover { background: #5a5a7a; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.primary { background: #4a7a4a; }
+    button.primary:hover { background: #5a8a5a; }
+    button.danger { background: #7a4a4a; }
+    button.danger:hover { background: #8a5a5a; }
+    input[type="number"] {
+      width: 80px;
+      background: #2d2d44;
+      color: #fff;
+    }
+    .canvas-container {
+      background: #2d2d44;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+    }
+    .stats {
+      display: flex;
+      gap: 2rem;
+      font-size: 0.9rem;
+      color: #aaa;
+    }
+    .stats span { color: #fff; }
+    .legend {
+      margin-top: 1rem;
+      font-size: 0.8rem;
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <h1>🌊 wfc-ts Visualizer</h1>
+  
+  <div class="controls">
+    <label>
+      Tileset:
+      <select id="tileset">
+        <option value="Knots">Knots</option>
+        <option value="Circuit">Circuit</option>
+        <option value="Rooms">Rooms</option>
+      </select>
+    </label>
+    <label>
+      Size:
+      <select id="size">
+        <option value="24">24×24</option>
+        <option value="32">32×32</option>
+        <option value="48" selected>48×48</option>
+        <option value="64">64×64</option>
+      </select>
+    </label>
+    <label>
+      Seed:
+      <input type="number" id="seed" value="12345" min="0">
+    </label>
+    <label>
+      Speed:
+      <select id="speed">
+        <option value="1">Slow (1/frame)</option>
+        <option value="10" selected>Medium (10/frame)</option>
+        <option value="50">Fast (50/frame)</option>
+        <option value="0">Instant</option>
+      </select>
+    </label>
+  </div>
+  
+  <div class="controls">
+    <button id="start" class="primary">▶ Start</button>
+    <button id="step" disabled>⏭ Step</button>
+    <button id="stop" class="danger" disabled>⏹ Stop</button>
+    <button id="reset">🔄 Reset</button>
+  </div>
+  
+  <div class="canvas-container">
+    <canvas id="canvas" width="480" height="480"></canvas>
+  </div>
+  
+  <div class="stats">
+    <div>Cells: <span id="cells">0</span> / <span id="total">0</span></div>
+    <div>Time: <span id="time">0</span>ms</div>
+    <div>Status: <span id="status">Ready</span></div>
+  </div>
+  
+  <div class="legend">
+    Colors show remaining tile possibilities: dark → few options, bright → many options, solid → collapsed
+  </div>
+
+  <script type="module">
+    // This visualizer demonstrates the stepRun API
+    // In a real project, you'd import from 'wfc-ts'
+    
+    // For this demo, we'll simulate the WFC behavior
+    // The actual solver would be imported as:
+    // import { SimpleTiledModel, loadTileset } from 'wfc-ts';
+    
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    
+    const tilesetSelect = document.getElementById('tileset');
+    const sizeSelect = document.getElementById('size');
+    const seedInput = document.getElementById('seed');
+    const speedSelect = document.getElementById('speed');
+    const startBtn = document.getElementById('start');
+    const stepBtn = document.getElementById('step');
+    const stopBtn = document.getElementById('stop');
+    const resetBtn = document.getElementById('reset');
+    const cellsSpan = document.getElementById('cells');
+    const totalSpan = document.getElementById('total');
+    const timeSpan = document.getElementById('time');
+    const statusSpan = document.getElementById('status');
+    
+    let running = false;
+    let generator = null;
+    let abortController = null;
+    let startTime = 0;
+    
+    // Simulated WFC state
+    let gridSize = 48;
+    let state = null; // Array of remaining tile counts per cell
+    let collapsed = null; // Array of collapsed tile indices
+    
+    // Color palette for visualization
+    const colors = [
+      '#1a1a2e', // 0 - contradiction (shouldn't happen)
+      '#4a1a4a', // 1 - almost collapsed
+      '#4a4a1a', // 2
+      '#1a4a4a', // 3
+      '#3a3a5a', // 4
+      '#4a4a6a', // 5+
+    ];
+    
+    const collapsedColors = [
+      '#e74c3c', '#e67e22', '#f1c40f', '#2ecc71', '#1abc9c',
+      '#3498db', '#9b59b6', '#34495e', '#95a5a6', '#fff',
+    ];
+    
+    function initState() {
+      const size = parseInt(sizeSelect.value);
+      gridSize = size;
+      const T = tilesetSelect.value === 'Circuit' ? 36 : 
+                tilesetSelect.value === 'Rooms' ? 28 : 9;
+      
+      state = new Array(size * size).fill(T);
+      collapsed = new Array(size * size).fill(-1);
+      
+      canvas.width = size * 10;
+      canvas.height = size * 10;
+      
+      totalSpan.textContent = size * size;
+      cellsSpan.textContent = '0';
+      timeSpan.textContent = '0';
+      statusSpan.textContent = 'Ready';
+      
+      render();
+    }
+    
+    function render() {
+      const cellSize = canvas.width / gridSize;
+      
+      for (let y = 0; y < gridSize; y++) {
+        for (let x = 0; x < gridSize; x++) {
+          const i = x + y * gridSize;
+          const remaining = state[i];
+          const tile = collapsed[i];
+          
+          if (tile >= 0) {
+            // Collapsed - use tile color
+            ctx.fillStyle = collapsedColors[tile % collapsedColors.length];
+          } else {
+            // Not collapsed - show remaining count
+            const colorIdx = Math.min(remaining, colors.length - 1);
+            ctx.fillStyle = colors[colorIdx];
+          }
+          
+          ctx.fillRect(x * cellSize, y * cellSize, cellSize - 0.5, cellSize - 0.5);
+        }
+      }
+    }
+    
+    // Simulated WFC step (in real usage, this would be the actual solver)
+    function* simulateWFC(seed) {
+      const rng = mulberry32(seed);
+      const total = gridSize * gridSize;
+      let resolved = 0;
+      
+      while (resolved < total) {
+        // Find cell with minimum remaining values (MRV)
+        let minIdx = -1;
+        let minVal = Infinity;
+        for (let i = 0; i < total; i++) {
+          if (collapsed[i] < 0 && state[i] < minVal) {
+            minVal = state[i];
+            minIdx = i;
+          }
+        }
+        
+        if (minIdx < 0) break;
+        
+        // Collapse it
+        const tile = Math.floor(rng() * minVal);
+        collapsed[minIdx] = tile;
+        state[minIdx] = 1;
+        resolved++;
+        
+        // Simulate propagation (reduce neighbor counts)
+        const x = minIdx % gridSize;
+        const y = Math.floor(minIdx / gridSize);
+        const neighbors = [
+          [x-1, y], [x+1, y], [x, y-1], [x, y+1],
+          [x-2, y], [x+2, y], [x, y-2], [x, y+2],
+        ];
+        
+        for (const [nx, ny] of neighbors) {
+          if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize) {
+            const ni = nx + ny * gridSize;
+            if (collapsed[ni] < 0 && state[ni] > 1) {
+              state[ni] = Math.max(1, state[ni] - Math.floor(rng() * 2));
+            }
+          }
+        }
+        
+        yield { done: false, observedCell: minIdx, cellsResolved: resolved };
+      }
+      
+      yield { done: true, ok: true, complete: true };
+    }
+    
+    // Mulberry32 PRNG (matches the solver's PRNG)
+    function mulberry32(seed) {
+      return function() {
+        let t = seed += 0x6D2B79F5;
+        t = Math.imul(t ^ t >>> 15, t | 1);
+        t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      };
+    }
+    
+    async function run() {
+      running = true;
+      startBtn.disabled = true;
+      stepBtn.disabled = true;
+      stopBtn.disabled = false;
+      statusSpan.textContent = 'Running...';
+      
+      const seed = parseInt(seedInput.value) || 12345;
+      const speed = parseInt(speedSelect.value);
+      
+      initState();
+      startTime = performance.now();
+      generator = simulateWFC(seed);
+      
+      const animate = () => {
+        if (!running) return;
+        
+        const stepsPerFrame = speed || gridSize * gridSize; // 0 = instant
+        
+        for (let i = 0; i < stepsPerFrame; i++) {
+          const result = generator.next();
+          
+          if (result.value.done) {
+            running = false;
+            const elapsed = performance.now() - startTime;
+            timeSpan.textContent = elapsed.toFixed(1);
+            statusSpan.textContent = result.value.ok ? '✓ Complete!' : '✗ Failed';
+            startBtn.disabled = false;
+            stepBtn.disabled = true;
+            stopBtn.disabled = true;
+            render();
+            return;
+          }
+          
+          cellsSpan.textContent = result.value.cellsResolved;
+        }
+        
+        timeSpan.textContent = (performance.now() - startTime).toFixed(1);
+        render();
+        requestAnimationFrame(animate);
+      };
+      
+      requestAnimationFrame(animate);
+    }
+    
+    function step() {
+      if (!generator) {
+        const seed = parseInt(seedInput.value) || 12345;
+        initState();
+        startTime = performance.now();
+        generator = simulateWFC(seed);
+        stepBtn.disabled = false;
+        statusSpan.textContent = 'Stepping...';
+      }
+      
+      const result = generator.next();
+      
+      if (result.value.done) {
+        const elapsed = performance.now() - startTime;
+        timeSpan.textContent = elapsed.toFixed(1);
+        statusSpan.textContent = result.value.ok ? '✓ Complete!' : '✗ Failed';
+        stepBtn.disabled = true;
+        generator = null;
+      } else {
+        cellsSpan.textContent = result.value.cellsResolved;
+        timeSpan.textContent = (performance.now() - startTime).toFixed(1);
+      }
+      
+      render();
+    }
+    
+    function stop() {
+      running = false;
+      startBtn.disabled = false;
+      stepBtn.disabled = false;
+      stopBtn.disabled = true;
+      statusSpan.textContent = 'Stopped';
+    }
+    
+    function reset() {
+      running = false;
+      generator = null;
+      startBtn.disabled = false;
+      stepBtn.disabled = false;
+      stopBtn.disabled = true;
+      initState();
+    }
+    
+    startBtn.addEventListener('click', run);
+    stepBtn.addEventListener('click', step);
+    stopBtn.addEventListener('click', stop);
+    resetBtn.addEventListener('click', reset);
+    sizeSelect.addEventListener('change', reset);
+    tilesetSelect.addEventListener('change', reset);
+    
+    // Initialize
+    initState();
+  </script>
+</body>
+</html>
