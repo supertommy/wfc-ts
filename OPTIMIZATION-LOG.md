@@ -898,3 +898,79 @@ VALID+DET mandatory; footprint DOWN (even tiny); NO speed regression on knots-48
 **Cost:** stash dance (paired) + 3×(5+5) measure + 4×prove + success50 + mem x3 + type x2 + edits + log/readme + commit ~12min wall + harness runs.
 
 Next candidate recommended (per return spec in task): RE-PROFILE of the post-narrowing (post-H23/26/27/28) solver to find new cost distribution + any remaining hot Int32 or secondary costs; then ideation pass 3 for fresh angles toward ~25 iterations. Ideation-2 narrowing set now complete.
+
+---
+
+## Round 3 Iteration 15 — RE-PROFILE (post-narrowing) + Ideation Pass 3 [STALL→IDEATE]
+
+**Trigger:** All prior candidates resolved (H5/H7/H8/H15/H13/H14/H17/H19/H11/H24/H25/H18/H20/H21 REVERTED/REJECTED; H1/H2/H4/H6/H10/H12/H16/H22/H23/H26/H27/H28 KEPT). Candidate list empty. Per optimize-one.md stall path: re-profile the now-narrowed+MRV solver, then creative-ideation to mint fresh candidates. Priority SPEED > success > memory. No solver edits this iteration (instrument src-optimized/model.ts only; fully reverted pre-commit).
+
+**Current headline (clean, post-H28, median-of-5 via harness/measure-speedup.ts, no instrumentation):**
+- knots-standard-48: 1.474 ms (6.83× vs ref ~10.07 ms)
+- circuit-turnless-34: 2.985 ms (2.34× vs ref ~6.98 ms)
+- rooms-30: 1.584 ms (1.96× vs ref ~3.10 ms)
+Success 100% on dense; mem circuit ~717 KB (down from early ~1244 KB via narrowing series).
+
+**Re-profile (instrumented, 5 runs each, median; using per-phase performance.now around clear/next/obs/prop + inside ban/flush/extract):**
+*Note: dense timer calls (in ban ~18k–40k×, every next/obs/prop) inflate absolute ms by ~1.5–2 ms vs clean runs above; relative % distribution is representative of post-narrowing wall.*
+
+```
+=== knots-standard-48 (T=9, ~2250 obs steps) ===
+med run wall: 3.135 ms   (top phases sum 2.886 = 92.0% of wall)
+  clear:            0.048 ms  1.5%
+  nextUnobs:        0.692 ms  22.1%   (of which flush 0.247 + extract 0.241)
+  observe:          0.390 ms  12.5%
+  propagate:        1.755 ms  56.0%
+  ban (subtotal):   0.511 ms  (called ~18432 times)
+  heapFlush (sub):  0.247 ms  (part of next)
+  heapExtract(sub): 0.241 ms  (part of next)
+
+=== circuit-turnless-34 (T=36, ~772 obs steps) ===
+med run wall: 4.480 ms   (top phases sum 4.413 = 98.5% of wall)
+  clear:            0.017 ms  0.4%
+  nextUnobs:        0.299 ms  6.7%   (of which flush 0.187 + extract 0.057)
+  observe:          0.181 ms  4.0%
+  propagate:        3.916 ms  87.4%
+  ban (subtotal):   0.814 ms  (called ~40460 times)
+  heapFlush (sub):  0.187 ms  (part of next)
+  heapExtract(sub): 0.057 ms  (part of next)
+
+=== rooms-30 (T=28, ~519 obs steps) ===
+med run wall: 2.314 ms   (top phases sum 2.264 = 97.8% of wall)
+  clear:            0.025 ms  1.1%
+  nextUnobs:        0.183 ms  7.9%   (of which flush 0.110 + extract 0.033)
+  observe:          0.082 ms  3.6%
+  propagate:        1.974 ms  85.3%
+  ban (subtotal):   0.529 ms  (called ~24300 times)
+  heapFlush (sub):  0.110 ms  (part of next)
+  heapExtract(sub): 0.033 ms  (part of next)
+```
+
+**Key observations from profile + OPTIMIZATION-LOG history:**
+- Propagation decrement loop remains the wall (56% knots / 87% circuit / 85% rooms) — even after H23/H26 cache-narrow + H6 batch. Matches Round-2 conclusion that H5/H15 algorithmic attacks on prop were correctly reverted (added branches/rescans cost > saved work).
+- Clear is now negligible (0.4–1.5%, << pre-H10 8-12%) — H10 fixpoint wins locked in.
+- Observe 3.6–12.5% (larger share on small-T knots); consistent with H7/H8 showing O(T) observe reworks yield little.
+- nextUnobs (post H4+H6+H22) now secondary: 22% on knots (flush+extract roughly equal), only 6.7–7.9% on prop-bound (flush dominates the sub-cost there). Heap extract itself is *small* (0.03–0.24 ms) thanks to batching; ban+flush work visible.
+- H22 (MRV default + guard) successfully eliminated the per-ban Math.log entirely for default path (was ~8-12% in H8 subprof).
+- Narrowing vein (H23/26/27/28) complete; no more obvious Int32 hot buffers left in committed inputs (prop* auto u8/u16; observed cold).
+- Ban subtotal ~0.5–0.8 ms despite 18k–40k calls — per-ban work is already lean.
+
+**Ideation Pass 3 (applied per creative-ideation skill):** Routed to TRIZ (for parameter conflicts: speed vs. correctness/branch-predictability/simplicity; mem vs. heuristic support) + first-principles (question accumulated assumptions visible in history + profile: "we must always carry entropy state", "prop inner must be general for all topologies", "heap is the only structure for selection", "clear must reset everything", "[0] is fine for contradiction sentinel"). Refused first obvious ("more narrowing", "wasm"). Generated only non-obvious, with honest payoff (speed mostly exhausted on prop; fresh are mem/micro or targeted at secondaries).
+
+**H29 (drop dead entropy arrays under MRV) — included per task, verified first:**
+Grep confirmation (pre-claim): all *reads* of `entropies[i]`, `sumsOfWeights[i]`, `sumsOfWeightLogWeights[i]` are inside `heuristic === Heuristic.Entropy ? ...` ternaries or `if (this.heuristic === Heuristic.Entropy)`. `weightLogWeights[t]` only read inside Entropy ban (observe uses raw `weights[]`). Writes in init/clear/H10 and scalar startingEntropy are unconditional dead work under default (MRV). No reads in entropy-heap, propagate, observe, result, etc. under MRV. Safe to drop.
+
+## Fresh candidates (H29 + 3 more)
+
+(See src-optimized/README.md for ranked TODO rows with full mech/tradeoff.)
+
+- **H29 (first-principles + TRIZ Taking Out / Segmentation):** conditional drop of entropies/sumsOfWeights/sumsOfWeightLogWeights + *0 snaps + weightLogWeights (T) + related scalars when heuristic !== Entropy. Tier-1 (MRV path byte-id). ~55 KB mem (circuit) + micro clear speed (fewer .set()). Keep full for Entropy users. Trade: slightly more ctor/init branches (once); if heuristic runtime-switchable would be wrong (but it is ctor-time).
+- **H30 (first-principles on MRV domain):** MRV-specific bucket priority queue (buckets[1..T] of cells; extract = lowest non-empty bucket + min-i scan for det tiebreak). Exploits that under MRV prio range is tiny integer 1..T (not arbitrary f64). Targets the 22% nextUnobs on knots (flush+extract). Tier-2. Trade: new ~100LOC heap impl; extract cost O(T + bucket-size) vs logN; for T=9/36 cheap buckets may win vs f64 sifts + may regress if min-buckets large. Non-obvious (WFC lit goes scan<->binary-heap; bucket like counting-sort for cardinalities).
+- **H31 (TRIZ "Another dimension" / asymmetry + first-prin on topology):** periodic fast-path for propagate (and boundary ban) inner loops. periodic=true is 2/3 of committed + common; the x2/y2 wrap/edge ifs + %MX are pure dead branches/arith in 85% path. Duplicate or select a no-check inner (mod still needed for periodic indexing but no boundary exits). Tier-1. Trade: code duplication risk in prop logic; measurable only if branch mispredicts were costing. Directly attacks the wall.
+- **H33 (first-prin on flush safety code + profile visibility):** elide heapUpdateGen wrap/reset (if(gen===0) fill) and 32-bit gen logic in flushHeapUpdates. With #flushes <= #observes << 2^32 (real runs <3k), collision impossible; removes branch+possible fill from now-visible ~4–8% flush subpath. Tier-1 micro. Trade: if someone drives 4B+ observes on one model instance without clear, dedup breaks (unrealistic). Questions the "must defend against all theoretical wrap" assumption inherited from general-purpose heap.
+
+**Honest assessment:** Propagation algorithmic wall (AC-4 decrement) confirmed unassailable in pure JS without changing the model (H5/H15 evidence). Fresh candidates are either memory/micro (H29/H33/H32 if added) or attack secondaries (H30 on knots next, H31 on prop branches). Speed target 3× on circuit/rooms likely unreachable in plain TS for this algo; continue until ideation yields zero high-payoff or external bar surpassed (already done).
+
+**Top for next iter:** H29 (mem win free, verified dead, completes the "only pay for what you use" first-prin vein opened by H22). Then H31 or H30 if profile shows headroom after H29.
+
+**Cost of this iter:** instrument+5×3 runs + clean re-measure + 2×grep verify + ideation (TRIZ+FP) + log/README edits + commit (docs) + revert + temp cleanup ~45 min wall. All measurements real; no fab.

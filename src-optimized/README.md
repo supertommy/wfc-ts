@@ -10,9 +10,9 @@ criteria at the bottom.
 
 | input | ref median |
 |-------|-----------|
-| knots-standard-48 (T=9, 48×48) | 10.43 ms |
-| circuit-turnless-34 (T=36, 34×34) | 7.23 ms |
-| rooms-30 (T=28, 30×30) | 3.14 ms |
+| knots-standard-48 (T=9, 48×48) | ~10.07 ms |
+| circuit-turnless-34 (T=36, 34×34) | ~6.98 ms |
+| rooms-30 (T=28, 30×30) | ~3.10 ms |
 
 ## Profile (where the cycles go) — `bun run scripts/profile.ts`
 
@@ -20,9 +20,9 @@ Two regimes:
 
 | input | T | dominant | share |
 |-------|---|----------|------|
-| knots-standard-48 | 9 | **entropy scan** (nextUnobservedNode) | 83.6% — O(cells²) full scan per step |
-| circuit-turnless-34 | 36 | **propagation** (compatible-decrement loop) | 66.5% |
-| rooms-30 | 28 | **propagation** | 78.2% |
+| knots-standard-48 | 9 | propagate 56% + nextUnobs(flush+extract) 22% | post-H4/H22/H23+ (see iter-15 profile) |
+| circuit-turnless-34 | 36 | **propagation** (decr loop) ~87% | (clear now <1% thanks H10; next ~7%) |
+| rooms-30 | 28 | **propagation** ~85% | narrowing (H23+) made prop % *higher* as other work shrank |
 
 Small-T-large-grid is **scan-bound**; larger-T is **propagation-bound**.
 
@@ -63,16 +63,17 @@ informational. See `prompts/optimize-one.md`.
 | H26 | propData Int32→Uint8 (t2 ids are ≤T<256, exact) + propLen Uint8 + propStart Uint16 | 1 (byte-id) | speed (propagation inner loop — the wall, via 4x cache on propData read) | KEPT | Uint8 (propData/propLen), Uint16 (propStart) for T=9/36/28 + totals<2k; knots 1.688→1.537ms (no reg), circuit 3.949→3.421ms (+13%), rooms 1.810→1.716ms (+5%); mem deltas -0.7/-4.8/-1.9 KB (prop shrink); VALID+DET (byte-id); Tier-1 cache win on inner-loop read. See log. |
 | H27 | stackT Int32→Uint8 (pattern ids ≤T<256) + stackI Int32→Uint16 (cell ids ≤count<65536) + dirty Uint16 | 1 (byte-id) | memory (stack family ~3x smaller) + marginal speed | KEPT | Uint8/Uint16/Uint16 (all inputs); knots 1.489→1.479ms (flat), circuit 2.953→3.004ms (noise), rooms 1.587→1.645ms (noise); mem 650k→505k /1015k→724k /631k→455k (-145/-291/-176 kB); VALID+DET; Tier-1 byte-id. See log. |
 | H28 | sumsOfOnes Int32→Uint8 (live count ≤T<256) + sumsOfOnes0 cache | 1 (byte-id) | memory (tiny) + marginal speed (heap reads) | KEPT | Uint8 for all (T=9/36/28<256); knots 1.475→1.486ms (noise), circ 2.963→2.900ms (noise), rooms 1.606→1.596ms (noise); mem -13.8kB/-6.9kB/-5.4kB (sums+s0); VALID+DET byte-id; completes ideation-2 narrowing (H23/26/27/28). See log. |
+| H29 | drop dead entropy arrays (entropies/sumsOfW*/weightLogW + *0 snaps) under MRV (default) | 1 (byte-id under MRV) | memory + micro clear | TODO | ~6 Float64 count arrays dead under MRV (H22); ~55KB mem circuit + tiny less .set() work in clear; keep allocs+work for heuristic=Entropy. Tier-1 when default. See iter-15 profile+log. |
+| H30 | MRV bucket priority queue (buckets[1..T] exploiting tiny integer range) replacing f64 heap for default | 2 (valid+det) | speed (knots nextUnobs 22% secondary) | TODO | first-principles on MRV prio domain (1..T ints); extract = first non-empty bucket + min-i for det. May beat logN+f64 on small-T. Trade: new impl, O(T+b) vs log. |
+| H31 | periodic fast-path in propagate (dead branch/arith elimination for periodic=true case) | 1 (byte-id) | speed (prop wall 85%+) | TODO | first-prin + TRIZ asymmetry: knots/circuit are periodic; hoist to no-wrap inner (mod still but no edge exits). Dup or select. Attacks main loop directly. |
+| H33 | elide gen-wrap reset in flushHeapUpdates (gen collision impossible in practice) | 1 (byte-id micro) | speed (flush ~4-8% of now-visible next) | TODO | remove if(gen===0) fill + 32b logic from H6 flush hot path. #flushes <<2^32. Micro on ban+heap-update path. |
 
 H3 (index-ordered active-cell bitset to trim the scan) is **deliberately skipped**:
 H4's heap replaces the scan entirely, so H3 would be throwaway work.
 
 **Re-profile before picking** (the reference profile in `scripts/profile.ts` is
 stale post-H4 — the scan it shows is gone). Instrument `src-optimized/model.ts`
-with per-phase timers (heap extract / observe / propagate / ban+heap-update) or
-use `bun --cpu-profile` on `harness/run.ts optimized <input>` to rank H5/H6/H7 by
-Amdahl on the *current* cost distribution. Add new candidates the new profile
-reveals.
+with per-phase timers (heap extract / nextUnobservedNode, observe, propagate, ban+heap-update, clear) — *temporarily only* — run on the three inputs (few reps, median), capture distribution, then `git checkout --` revert before any commit. (See iter-15 in OPTIMIZATION-LOG.md + src-optimized/README Round-3 narrative.) Add fresh candidates from the profile + ideation pass (TRIZ + first-principles).
 
 ## Stealable techniques (from references/three-wfc and references/fast-wfc)
 
@@ -136,8 +137,7 @@ decrement loop is already flat CSR with AC-4 support counts — close to optimal
 for the simple-tiled-model propagation algorithm. A further circuit/rooms win
 would require a different propagation algorithm (out of scope for the ratchet,
 which optimizes the existing algorithm; a new algorithm is a separate project).
-Loop stopped on exhaustion: every high-payoff candidate tried, fresh profiles
-reveal no new high-payoff candidate.
+Loop paused on exhaustion after H28 (narrowing complete); iter-15 re-profile + ideation-3 (TRIZ+first-principles on wall evidence + history of H5/H15 reverts + H22/H23 wins) minted 4 fresh (H29–H31/H33) — see table + OPTIMIZATION-LOG.md. Real stop only when an ideation pass itself yields *nothing* worth trying.
 
 ## Round 3 — "best WFC in the world" (multi-axis, TRIZ-derived)
 
@@ -218,7 +218,7 @@ Now propagation remains the wall; H24 (subsumed) + H25 (already-clustered, no he
 
 **Post-H27 (this iteration):** H27 (stack + dirty cache-narrow) KEPT. Mirrored auto-select: stackT Uint8 (by T), stackI+dirtyHeapCells Uint16 (by count<64k). Stack+dirty family ~3× smaller bytes (was big ~33% slice). Speed within noise on paired med5 (knots 1.489→1.479ms flat/gain, circ 2.953→3.004ms ~+1.7% noise, rooms 1.587→1.645ms ~+3.6% noise); mem win 650k→505k / 1015k→724k / 631k→455k (-145k/-291k/-176kB). VALID+DET Tier-1 (stack empty at H10 snap, scalars ok). Next: H28 or re-profile + ideation-3.
 
-**Post-H28 (this iteration):** H28 (sumsOfOnes Int32→Uint8 +0) KEPT. Completes the ideation-2 cache-narrowing set (H23/H26/H27/H28 all KEPT). Auto Uint8 (T<256) for sumsOfOnes/sumsOfOnes0. Speed within noise (knots 1.475→1.486ms, circ 2.963→2.900ms, rooms 1.606→1.596ms paired med5; no reg); mem down -13.8/-6.9/-5.4 KB (exact 6B*cells for 2 arrays). VALID+DET Tier-1 byte-id. Free tiny mem win (spec: memory lowest, but no speed cost => KEEP). Now narrowing set done. Next per return: RE-PROFILE post-narrow solver + ideation-3 for fresh angles toward ~25 iters.
+**Post-H28 (prior):** H28 completed ideation-2 narrowing. **Iter 15 (this):** RE-PROFILE (see log for per-phase %: prop now 56/87/85% on knots/circuit/rooms; next 22% on knots; clear <2%; heap-extract low) + ideation-3 (TRIZ+first-principles) minted H29 (dead entropy drop under MRV) + H30 (MRV buckets) + H31 (periodic prop fastpath) + H33 (flush micro). All added as TODO rows below. Current clean: knots 1.474ms (6.83×), circuit 2.985ms (2.34×), rooms 1.584ms (1.96×). Top next: H29.
 
 ## Exit criteria (the orchestrator checks each loop turn)
 
