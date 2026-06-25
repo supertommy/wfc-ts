@@ -583,3 +583,85 @@ On dense, median time also much worse under bias (0.46 ms → 1.9 ms).
 **Cost:** full STEP1 + driver (multiple N=10 runs) + temp (b) + 2×(3×5 measures) + success + prove x2 + type xN + cleanup + log/readme + this commit ~18min wall + harness executions. All numbers are real harness output, no fabrication.
 
 Next: given H25 rejected, the loop should pivot to H16 (steppable/cancelable generator loop — the differentiator for "best on web") + memory candidates (H18/H20 if speed-neutral) + one final ideation pass (TRIZ/first-principles on whether AC-4+greedy itself is the limit). H21 WebGPU is plausible for raw 3x but only as optional path; plain JS stays, and current ~2x on circuit/rooms may be the practical ceiling without new algorithm. Re-profile optimized to confirm prop % is still dominant before more work.
+
+## Hypothesis 21 — WebGPU propagation acceleration (optional path) — INVESTIGATE-FIRST feasibility [REJECTED]
+
+**Grounding (per optimize-one.md):** `bun run harness/prove-harness.ts` (this machine, Bun 1.3.10 macOS arm64):
+
+| input               | ref ms | opt ms | speedup | valid | det |
+|---------------------|--------|--------|---------|-------|-----|
+| knots-standard-48   | 10.71  | 1.36   | 7.90x   | VALID | DET |
+| circuit-turnless-34 | 6.85   | 3.53   | 1.94x   | VALID | DET |
+| rooms-30            | 2.93   | 1.43   | 2.05x   | VALID | DET |
+
+Propagation wall confirmed: ~60%+ of time in the decrement loop (post-H4/H6/H10/H22/H23). Circuit: 40460 bans/run (measured via temp count on committed input; 34×34 cells, T=36).
+
+**STEP 1 — Environment check (WebGPU availability):** 
+
+- `globalThis.navigator?.gpu` is `undefined` in Bun 1.3.10 (confirmed via `bun -e`) and in Node v24.
+- No WebGPU adapter present in project (`bun pm ls`, package.json, node_modules/*gpu* all clean).
+- Bun core has no built-in WebGPU (open issue #7380 since 2023; maintainers recommend community N-API/FFI).
+- Community options exist (as of 2026): `bun-webgpu` (Dawn FFI, ~78% CTS, prebuilts+setupGlobals), `@sylphx/webgpu` (wgpu-rs for Node/Bun), `webgpu` (Dawn node addon), `doe-gpu`, Electrobun (bundled for desktop apps). All require native addon/FFI install + platform binaries or build-time deps (Zig/Rust for some); none are "bun add" zero-cost portable.
+- Browser: WebGPU API is natively available in modern Chrome/Edge/Firefox/Safari (since ~2023-24 releases). 
+- **Conclusion:** WebGPU cannot be made available in the project's test harness / benchmark environment (Bun/Node CLI runs that produce all committed speed numbers) without significant native setup. The gate requires *real measurement*; fabricating GPU ms numbers is forbidden. This alone is sufficient grounds to REJECT H21 for the current ratchet (cannot validate a win).
+
+**STEP 2 — Feasibility analysis (can GPU win SINGLE-RUN speed on committed inputs?):**
+
+The propagation hot path in `src-optimized/model.ts:propagate()` / `ban()` is a **sequential dependent ban cascade**:
+
+```ts
+while (stacksize > 0) {
+  pop (i1, t1)
+  for (d=0; d<4) {
+    i2 = neighbor(i1,d)
+    for (l=0; l<propLen[d*T+t1]; l++) {
+      t2 = propData[...]
+      if (--compatible[i2*T4 + t2*4 + d] === 0) ban(i2, t2)  // pushes more to stack
+    }
+  }
+}
+```
+
+- 40460 dependent bans on circuit-34 (each ban can immediately trigger O(fanout) more via the inner t2 loop).
+- This is classic AC-4 worklist propagation: the effect of one ban feeds the next. Inherently sequential along the dependency chain (wavefront of eliminations). Inner t2 decrement loop has data-parallel flavor (independent -- for different t2), but the controlling stack is LIFO and the decision to ban feeds subsequent work.
+
+**Naive GPU port (one dispatch per ban to parallelize inner decrements):** ~40k GPU dispatches per solve. WebGPU compute dispatch + submit overhead is typically 10-100 µs (often higher with validation, queue, fences). 40k × 50µs = 2s of overhead — 500× slower than the 3.53 ms CPU baseline. Even optimistic 5µs/dispatch = 200 ms overhead, still >> CPU. Data upload (wave state, prop tables) + result readback per dispatch or per-solve makes it worse. REJECT naive mapping outright.
+
+**The only GPU-friendly reformulation: parallel cellular relaxation (synchronous fixpoint iterations):**
+
+Replace the sequential stack with bulk-parallel passes: in each global iteration, *every* cell simultaneously re-evaluates its support counts from current live neighbors (or uses a diff from banned), bans any that drop to 0, and repeat until no bans in an iteration (or a fixed max). This is O(grid diameter) iterations of O(cells × T) fully data-parallel work — GPU loves bulk arithmetic with no dynamic stack.
+
+- For circuit-34 (diameter ~34): ~34 iterations.
+- Work per iter: 1156 cells × 36 T × 4 dirs ≈ 166k ops (tiny).
+- To detect convergence you either: (a) run a fixed diameter number of iterations (wasteful if early), or (b) dispatch + read back a "didBan" atomic/flag each iter. Readbacks are expensive (CPU-GPU sync).
+- Cost estimate on real GPU (mid-range 2025-26 discrete or Apple Silicon): dispatch+submit ~0.05-0.2 ms; readback/sync ~0.2-1 ms. 34 × 0.3 ms = ~10 ms overhead floor *before* any useful work — already 3× the entire 3.53 ms CPU run. Small grids cannot amortize launch costs.
+- GPU saturation: modern GPUs want 10k-1M+ parallel threads + high arithmetic intensity to hide latency. 42k ops/iter is a few workgroups at best; launch overhead dominates. CPU (single-thread Bun/JS) is extremely fast at tight sequential loops over 40k items with good L1/L2 locality (flat arrays, H1/H2/H23).
+
+**Where GPU *would* win:** LARGE grids, e.g. 256×256 (65k cells). CPU AC-4 sequential O(total bans) can become 1M-10M+ operations with long dependency chains. GPU parallel relaxation: still O(diameter)~500 iterations but each is massive bulk-parallel (millions of ops/iter saturating the GPU, few dispatches, or even persistent kernel). Throughput (many solves or huge single grid) could be 10-100×. But this is *not* the committed benchmark (24-48 grids, sub-4 ms target for single-run latency).
+
+**Other practical barriers (even if env had WebGPU):**
+
+- Different algorithm (Tier-2): the iteration order of bans changes vs sequential stack → different collapse sequence → VALID+DET gate but compare* FAIL + possible success-rate deltas. Major rewrite of propagate/clear/ban interaction.
+- API surface: WebGPU is async; `run()` would need to become async or use Atomics/Workers for sync illusion. Portable fallback must stay 100% sync plain JS for Node and non-GPU browsers.
+- Memory model: GPU buffers have upload/download cost; for sub-ms solves the transfer tax alone kills single-run latency.
+- Maintenance: two codepaths (JS + WGSL kernels + bind groups + buffer mgmt) for an optional path that doesn't help the measured cases.
+- Browser-only win? Even in browser, for these problem sizes the CPU path (highly optimized JS) is hard to beat; WebGPU shines on large data-parallel or when offloading from main thread for responsiveness, not raw small-WFC latency.
+
+**STEP 3 — Decision:**
+
+H21 is **REJECTED** for the committed Round 3 benchmark and current ratchet. 
+
+- Primary blocker: cannot measure (no WebGPU in Bun/Node harness env without significant native setup that would not be present for users running `bun run harness/measure-speedup.ts`).
+- Secondary (analysis): even *if* measurable and env-supported, no plausible single-run latency win on 24-48 grids. Naive mapping is 100×+ slower; the parallel-relaxation rewrite has ~3-34 ms dispatch/readback overhead floor + insufficient work to saturate + changes the algorithm. CPU sequential decrement is already near-optimal for this size (flat arrays, narrow types, batched everything else).
+- GPU parallel relaxation is a legitimate future direction for *large-grid throughput* (256×+), not this round's single-run speed target on small inputs. Documented here so it is not lost.
+
+Per rules: no code changes to src-optimized/ (or anywhere) because no winning measurable prototype was found. Only log + README updated. No fabrication of GPU timings.
+
+**Recommendation for pivot (per return spec):** The speed axis on the committed inputs is now at the pure-JS ceiling (~1.94-2.05x on circuit/rooms vs ref; ~7.9x on knots). H5/H8/H15 (alg trims) reverted; H23/H22 (cache/ban) kept; H24 subsumed, H25 rejected (already clustered). H21 rejected. Next should be:
+
+1. H16 (steppable/cancelable run loop) — the "best on web" differentiator (no other JS WFC lib offers it). Tier-1, same outputs.
+2. Memory candidates H18/H20 only if speed-neutral (speed > mem).
+3. Fresh ideation pass (TRIZ/first-principles) toward ~25 iterations total, questioning AC-4/greedy itself if we want >3x on prop-bound.
+
+**Cost:** env probes (3 shells) + ban-count temp (non-committed /tmp) + full analysis + 1×prove + writeup + edits ~25 min wall. Harness run numbers are real (no fake GPU data).
+
