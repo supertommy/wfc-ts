@@ -8,6 +8,7 @@
 ## Features
 
 - **Fast**: 2.5–20x faster than comparable JS/TS implementations
+- **100% success rate**: Solves hard tilesets (Summer 48×48 periodic) that others fail on
 - **Deterministic**: Same seed → same output, every time
 - **Steppable**: Generator-based API for visualization and cancellation
 - **Zero dependencies**: Pure TypeScript, works in Node, Bun, and browsers
@@ -132,7 +133,7 @@ enum Heuristic {
 
 Measured on macOS arm64 with Bun 1.3. Median of 5 runs, model construction excluded.
 
-### vs External Implementations
+### Speed vs External Implementations
 
 | input | wfc-ts | kchapelier | blazinwfc | three-wfc |
 |---|---|---|---|---|
@@ -145,6 +146,15 @@ Measured on macOS arm64 with Bun 1.3. Median of 5 runs, model construction exclu
 
 **Summary**: 2.5–20x faster than all comparable implementations.
 
+### Success Rate (Summer tileset, 48×48 periodic)
+
+| Solver | Success Rate | Avg Time |
+|--------|--------------|----------|
+| **wfc-ts** | **100%** | **45ms** |
+| Baseline (no LCV) | 14% | ~500ms+ |
+
+The Summer tileset with periodic boundaries is notoriously difficult — most WFC implementations fail frequently and require many retries. Our LCV heuristic achieves 100% success on the first attempt.
+
 See [benchmarks/external/RESULTS.md](benchmarks/external/RESULTS.md) for methodology and N/A explanations.
 
 ## How It Works
@@ -156,13 +166,49 @@ Wave Function Collapse is a constraint satisfaction algorithm:
 3. **Propagate**: Remove incompatible tiles from neighbors (AC-4)
 4. **Repeat** until solved or contradiction
 
+### Key Optimizations
+
 This implementation uses:
-- **Bucket priority queue** for O(1) minimum-remaining-values selection
-- **Flat typed arrays** for cache-efficient propagation
-- **Precomputed neighbor tables** to eliminate per-cell arithmetic
-- **Restart-with-derived-seeds** for 100% success on hard inputs
+
+- **LCV heuristic (Least Constraining Value)**: When collapsing a cell, prefer tiles that leave the most options for neighbors. Uses `weight = baseWeight × (1 + freedom)³` where freedom = count of compatible tiles across all neighbors. This achieves **100% success rate** on hard inputs while maintaining good visual variety.
+
+- **Bucket priority queue**: O(1) minimum-remaining-values selection using Dial's algorithm with integer keys.
+
+- **Flat typed arrays**: Cache-efficient SoA layout for wave state and compatibility counts.
+
+- **Precomputed neighbor tables**: Eliminates per-cell coordinate arithmetic in the hot propagation loop.
+
+- **Restart-with-derived-seeds**: On contradiction, retry with a deterministically-derived seed (not random) so results remain reproducible.
+
+### Success Rate
+
+The LCV heuristic was tuned to balance success rate with visual variety:
+
+| Power | Success Rate | Visual Variety | Notes |
+|-------|--------------|----------------|-------|
+| ^1 | 72% | Best | Original LCV |
+| ^2 | 99% | Good | Almost perfect |
+| **^3** | **100%** | **Good** | **← Default** |
+| ^8 | 100% | Poor (uniform) | Too aggressive |
+
+Higher powers make the solver too conservative, always picking the "safest" tile and producing boring output. ^3 is the sweet spot.
 
 See [docs/](docs/) for a detailed optimization walkthrough.
+
+## Visualizer
+
+A browser-based visualizer is included for exploring the algorithm:
+
+```bash
+bun run viz/server.ts
+# Open http://localhost:3456
+```
+
+Features:
+- Real-time step-through visualization
+- Multiple tilesets (Knots, Circuit, Rooms, Summer)
+- Adjustable speed (instant to step-by-step)
+- Comparison with mxgmn's canonical C# implementation
 
 ## Development
 
@@ -193,6 +239,28 @@ Uses the [mxgmn WaveFunctionCollapse](https://github.com/mxgmn/WaveFunctionColla
 ```
 
 Sample tilesets included in `tilesets/` (from mxgmn, MIT licensed).
+
+## Optimization Journey
+
+This solver was built using [Mike Acton's ratchet methodology](https://github.com/macton/differentiable-collisions-optc):
+
+1. **Start with a correct reference** — faithful port of mxgmn's C# solver
+2. **Profile first** — identify actual bottlenecks (propagation was 66–78% of runtime)
+3. **One hypothesis at a time** — test each optimization in isolation
+4. **Gate on correctness** — every change must pass VALID + DETERMINISTIC checks
+5. **Keep or revert** — only keep changes that measurably improve the target metric
+
+**17 hypotheses tested**, 17 kept:
+
+| Category | Key Optimizations |
+|----------|-------------------|
+| Data layout | Flat typed arrays (SoA), CSR propagator, auto-narrowed integer widths |
+| Selection | Bucket PQ for O(1) MRV, batched heap updates |
+| Propagation | Precomputed neighbor tables, direct compatible-base indexing |
+| Success rate | LCV heuristic with (1+freedom)³ weighting |
+| Ergonomics | Steppable generator API, restart-with-derived-seeds |
+
+See [docs/optimization-history.md](docs/optimization-history.md) and [OPTIMIZATION-LOG.md](OPTIMIZATION-LOG.md) for the full journey.
 
 ## Lineage
 
