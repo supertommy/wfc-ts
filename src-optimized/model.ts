@@ -644,10 +644,12 @@ export abstract class Model {
         }
       }
       
-      // Weight = original weight * (1 + freedom)
+      // H54: Weight = original weight * (1 + freedom)^2
+      // Squared to amplify the bias toward high-freedom tiles.
       // The +1 ensures tiles with 0 freedom still have some chance (based on weight alone)
       // This keeps determinism: same seed produces same result.
-      dist[t] = weights[t] * (1 + freedom);
+      const f = 1 + freedom;
+      dist[t] = weights[t] * f * f;
     }
     
     const r = weightedPick(dist, random.nextDouble());
