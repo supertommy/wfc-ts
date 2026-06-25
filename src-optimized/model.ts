@@ -612,11 +612,44 @@ export abstract class Model {
   }
 
   private observe(node: number, random: Random): void {
-    const { wave, distribution: dist, weights, T } = this;
+    const { wave, distribution: dist, weights, T, neighbors, propStart, propLen, propData } = this;
     const base = node * T;
+    
+    // LCV (Least Constraining Value): weight tiles by how many options they leave for neighbors.
+    // For each candidate tile t, count total compatible tiles across all neighbors.
+    // Multiply by the original weight to preserve tileset aesthetics while biasing toward
+    // tiles that don't paint us into a corner.
     for (let t = 0; t < T; t++) {
-      dist[t] = wave[base + t] ? weights[t] : 0;
+      if (!wave[base + t]) {
+        dist[t] = 0;
+        continue;
+      }
+      
+      // Count neighbor freedom if we pick tile t
+      let freedom = 0;
+      const nbase = node * 4;
+      for (let d = 0; d < 4; d++) {
+        const i2 = neighbors[nbase + d];
+        if (i2 < 0) continue; // No neighbor in this direction
+        
+        // How many tiles in neighbor's wave are compatible with t in direction d?
+        const key = d * T + t;
+        const start = propStart[key];
+        const len = propLen[key];
+        const nwbase = i2 * T;
+        
+        for (let l = 0; l < len; l++) {
+          const t2 = propData[start + l];
+          if (wave[nwbase + t2]) freedom++;
+        }
+      }
+      
+      // Weight = original weight * (1 + freedom)
+      // The +1 ensures tiles with 0 freedom still have some chance (based on weight alone)
+      // This keeps determinism: same seed produces same result.
+      dist[t] = weights[t] * (1 + freedom);
     }
+    
     const r = weightedPick(dist, random.nextDouble());
     for (let t = 0; t < T; t++) {
       if (wave[base + t] !== (t === r ? 1 : 0)) this.ban(node, t);
