@@ -125,7 +125,22 @@ Once the GPU investigation is paused or resolved, remaining Phase 4c work:
 4. Final README + open-source packaging (API docs, types, examples, benchmarks/external/RESULTS.md
    refresh with the post-Round-3 numbers).
 
-The CPU ratchet loop is STOPPED. Current pure-JS candidates are exhausted.
+The CPU ratchet loop is REOPENED for **Round 4 algorithm-level propagation experiments**. The user explicitly wants another CPU ratchet round that tries the loop-rethinking candidates, not another pass of tiny layout filings. Keep the shippable optimized solver stable unless a candidate proves VALID+DET and faster.
+
+Round 4 candidate order, highest expected payoff first:
+1. **Dirty-cell + bitset support propagation**: script-local alternate engine first. Represent each cell domain as one or more `u32` lanes; precompute support masks by `(d,t,lane)`; when a cell changes, visit neighboring cells and remove live tiles with no bitset support. This changes the propagation formulation (AC-3-ish domain filtering) and may coalesce many tile bans per changed cell.
+2. **Cell-batched AC-4**: keep support counts but batch newly banned tiles by changed cell/direction, processing all tile removals for a cell together to reduce repeated neighbor/queue overhead.
+3. **Generated/specialized hot kernel**: generate or specialize per tileset/grid shape so `T`, `T4`, typed-array constructors, and maybe propagator list access become monomorphic constants. Only pursue after algorithmic propagation candidates, unless profiling shows polymorphism/dispatch overhead.
+4. **Propagation ordering experiments**: LIFO vs FIFO vs spatial/ring ordering of changed cells/tile bans. Lower expected payoff; measure only if the higher-payoff propagation formulation candidates fail.
+
+Round 4 loop rules:
+- One hypothesis per iteration.
+- For algorithm rewrites, start as a script-local prototype or isolated optional file that compares against the current optimized solver and independent validator before touching `src-optimized/model.ts`.
+- If a prototype proves VALID+DET and faster on the real gates, promote it cleanly into `src-optimized/` in a later iteration.
+- Measure against the current optimized JS solver, not just reference. Mandatory gates remain `bun run typecheck` and `bun run harness/prove-harness.ts` for promoted solver changes; prototypes must run their own correctness comparison and/or use validator paths.
+- Log every result in `OPTIMIZATION-LOG.md`, update `src-optimized/README.md`, and commit useful checkpoints.
+- Stop only when the Round 4 candidates are exhausted and a fresh ideation pass yields no high-payoff CPU path.
+
 The GPU ratchet loop is also STOPPED. The no-spin WebGPU paths tested after compact did not produce a viable crossover.
 
 Only restart GPU research if a genuinely new algorithmic seam appears (not another variant of per-observe readbacks, fixed-epoch dispatch trains, dense scans, or frontier over-dispatch). If restarting anyway, use an objective like:
