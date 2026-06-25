@@ -39,9 +39,10 @@ informational. See `prompts/optimize-one.md`.
 | H1 | flatten wave + compatible to typed arrays (SoA) | 1 (byte-id) | propagation + scan reads | KEPT | 1.27/1.17/1.19x on knots-48/circuit/rooms |
 | H2 | flatten propagator to flat CSR typed arrays | 1 (byte-id) | propagation (circuit/rooms) | KEPT | 1.40/1.59x on circuit/rooms (prop-bound targets; +~16-20% over H1); knots within noise |
 | H4 | heap-based entropy selection (O(log n) extract-min + decrease-key) | 2 (valid+det) | scan (knots-48, 83%) | KEPT | 6.65x on knots-48 (1.72ms vs 11.44); 1.60/1.62x on circuit/rooms; compare* FAIL expected (Tier-2) |
-| H5 | propagation: skip/dedup work on already-collapsed cells; trim per-decrement overhead | 1 (byte-id) | propagation (now dominant post-H4) | TODO | — |
+| H5 | propagation: skip/dedup work on already-collapsed cells; trim per-decrement overhead | 1 (byte-id) | propagation (now dominant post-H4) | REVERTED | regressed (added checks in hot path cost more than saved; knots 2.05→2.25ms, circ 4.95→6.67ms); see log |
 | H6 | heap decrease-key cost on large-T (many bans) — batch/lazy heap updates | 2 (valid+det) | ban + heap (circuit T=36) | TODO | — |
 | H7 | observe weighted-pick is O(T) per collapse — precompute/cumsum for large T | 1 (byte-id) | observe (circuit T=36) | TODO | — |
+| H8 | ban per-call overhead (sums updates + 4x compat zero + entropy + heap update/remove) for high ban volume | 2 (valid+det) | ban+heap (25-31% on circuit/rooms) | TODO | — |
 
 H3 (index-ordered active-cell bitset to trim the scan) is **deliberately skipped**:
 H4's heap replaces the scan entirely, so H3 would be throwaway work.

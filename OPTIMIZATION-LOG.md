@@ -140,3 +140,63 @@ regression on any input.
 **Cost:** ~1 LLM turn + ~2min wall (study three-wfc heap + ground run +
 implement heap+wire + typecheck + 3x harness runs + commit + log + readme).
 Note: no revert needed; first attempt passed gates + speedup.
+
+---
+
+## Round 2 baseline profile (H5+ round, post-H4; instrumentation on optimized only)
+
+Re-profiled the *optimized* solver (H1+H2+H4 state) because `scripts/profile.ts`
+only covers the reference and its scan (now gone). Instrumented `src-optimized/model.ts`
+temporarily with per-phase timers around:
+- nextUnobservedNode (heap extract + lazy)
+- observe (dist build + weightedPick)
+- propagate (decrement loop; ban time subtracted so not double)
+- ban (wave/compat/stack/sums + heap update/remove)
+
+Ran via `harness/run.ts optimized <input>` (warmup + measured), 5 post-warm samples each;
+medians computed, then scaled by (clean opt total from prove-harness / instr total)
+to recover realistic absolute ms (instrumentation adds overhead, esp. in ban).
+Clean opt totals (median-of-5 prove): knots-48 1.69ms, circuit 4.48ms, rooms 1.89ms.
+
+**Per-phase median (est. real ms + % of run work):**
+
+| input | total | next (heap) | observe (pick) | propagate | ban+heap | other |
+|-------|-------|-------------|----------------|-----------|----------|-------|
+| knots-standard-48 | 1.69ms | 0.122ms (7.2%) | 0.136ms (8.0%) | 0.757ms (44.8%) | 0.479ms (28.3%) | 0.191ms (11.3%) |
+| circuit-turnless-34 | 4.48ms | 0.052ms (1.2%) | 0.173ms (3.9%) | 2.966ms (66.2%) | 1.141ms (25.5%) | 0.150ms (3.4%) |
+| rooms-30 | 1.89ms | 0.037ms (2.0%) | 0.070ms (3.7%) | 1.118ms (59.1%) | 0.590ms (31.2%) | 0.081ms (4.3%) |
+
+**Amdahl takeaway (for picking):** Propagation is the dominant cost on the prop-bound
+inputs we care about for Round 2 (66% circuit, 59% rooms). Ban+heap is second at ~25-31%.
+Observe and next are small (<9%). Therefore H5 (prop skip/dedup + trim dec overhead)
+has highest payoff. (H6 would target ban; H7 observe.)
+
+Instrumentation reverted (git checkout) before implementation; no debug left in tree.
+Profile cost: ~3min wall (multiple runs per input).
+
+## Hypothesis 5 — propagation skip/dedup on collapsed + trim per-decrement [REVERTED]
+
+**Hypothesis:** Post-H4, propagation dominates (66%/59% on circuit/rooms per Round2 profile).
+Add two cheap guards in the inner decrement loop of propagate(): (a) if (sumsOfOnes[i2] === 0)
+continue before t2 loop (skip already-dead cells); (b) if (wave[i2*T + t2] === 0) continue before
+-- (skip already-banned variants). Safe because eliminated variants/cells have no live options;
+should trim work with negligible branch cost. Tier-1 (no change to ban/observe order).
+
+**Change:** Single edit in `src-optimized/model.ts`: destructure wave+sumsOfOnes, add the two
+`continue` guards (with H5 comments) in propagate().
+
+**Before (median-of-5 measure-speedup, clean post-H4):** knots 2.050ms (5.26x), circuit 4.948ms (1.49x), rooms 2.375ms (1.44x)
+
+**After (same protocol, with H5 guards):** knots 2.250ms (4.80x), circuit 6.671ms (1.10x), rooms 2.794ms (1.21x)
+
+**Gate:** typecheck clean; prove-harness: VALID+DET on all (viol=0); compare* FAIL as expected from H4.
+
+**Decision:** REVERT. VALID+DET hold, but knots-48 regressed (2.05→2.25) and prop-bound targets
+regressed hard (circuit 4.95→6.67, rooms 2.38→2.79). The added per-iter checks (esp. wave[] load
++ branch in the *inner* l loop) cost more than saved on this engine; no net win. (Common case
+most t2 are live, so branch rarely skips.)
+
+**Cost:** ~1 LLM turn + ~5min wall (reprofile 3x5runs, 2x full measure5 on 3 inputs, gate runs,
+log+readme, revert).
+
+(The Round 2 baseline profile is recorded above; it drove picking H5 first.)
