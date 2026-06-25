@@ -61,6 +61,20 @@
 //   memory for the snapshot copy is ACCEPTABLE. Outputs identical to before (same start
 //   state for given seed) so compare* status is unchanged. Gate on VALID+DET.
 //
+// HYPOTHESIS 12: restart-with-derived-seeds on contradiction (no undo stack).
+//
+//   Hard inputs contradict on some seeds (knots-dense-24: 5% pre-H12). With sub-ms
+//   solves (H10 made clear() a cheap .set()), N restarts are cheap vs backtracking
+//   (no undo stack, memory-free). On contradiction restart with deterministically-
+//   derived seed for k>=1. Attempt 0 ALWAYS uses the passed `seed` directly (no
+//   derivation) so committed prove-harness seeds (first-try complete) are identical
+//   to pre-H12 => DET and compare* status unchanged. deriveRestartSeed(base,k) is
+//   pure (32-bit mulberry-style mix) => run(seed,limit,budget) is deterministic
+//   under the extended contract. Default budget=100 (sensible, >=1) so success-rate
+//   callers get restarts; speed callers on committed seeds unaffected. Success axis
+//   (target >=99% dense); speed must not regress (speed ranks above success).
+//   Tier-2; gate VALID+DET (re-runs with same default budget must match).
+//
 // PRNG: mulberry32, same as the reference (deterministic contract).
 
 import { mulberry32, type Random } from "./prng.js";
@@ -203,35 +217,47 @@ export abstract class Model {
     this.hasFixpoint = false;
   }
 
-  run(seed: number, limit: number): boolean {
+  run(seed: number, limit: number, restartBudget = 100): boolean {
     if (this.count === 0) this.init();
-    this.clear();
 
-    const random: Random = mulberry32(seed);
-    const limitNeg = limit < 0;
+    for (let attempt = 0; attempt <= restartBudget; attempt++) {
+      this.clear();
+      const s = attempt === 0 ? seed : deriveRestartSeed(seed, attempt);
+      const random: Random = mulberry32(s);
+      const limitNeg = limit < 0;
 
-    for (let l = 0; limitNeg || l < limit; l++) {
-      const node = this.nextUnobservedNode(random);
-      if (node >= 0) {
-        this.observe(node, random);
-        const success = this.propagate();
-        if (!success) return false;
-      } else {
-        // No unobserved node remains: every cell has collapsed to one variant.
-        const { wave, T, observed, count } = this;
-        for (let i = 0; i < count; i++) {
-          const base = i * T;
-          for (let t = 0; t < T; t++) {
-            if (wave[base + t]) {
-              observed[i] = t;
-              break;
+      let contradicted = false;
+      for (let l = 0; limitNeg || l < limit; l++) {
+        const node = this.nextUnobservedNode(random);
+        if (node >= 0) {
+          this.observe(node, random);
+          const success = this.propagate();
+          if (!success) {
+            contradicted = true;
+            break;
+          }
+        } else {
+          // No unobserved node remains: every cell has collapsed to one variant.
+          const { wave, T, observed, count } = this;
+          for (let i = 0; i < count; i++) {
+            const base = i * T;
+            for (let t = 0; t < T; t++) {
+              if (wave[base + t]) {
+                observed[i] = t;
+                break;
+              }
             }
           }
+          return true;
         }
+      }
+      if (!contradicted) {
+        // Limit reached without contradiction (preserve original behavior).
         return true;
       }
+      // contradicted: clear + retry with derived seed (if attempts remain)
     }
-    return true;
+    return false;
   }
 
   private nextUnobservedNode(random: Random): number {
@@ -552,4 +578,30 @@ export function weightedPick(values: Float64Array | number[], r: number): number
     if (partialSum >= threshold) return i;
   }
   return 0;
+}
+
+/**
+ * deriveRestartSeed (H12) — pure, deterministic 32-bit mixer.
+ *
+ * Same (baseSeed, k) ALWAYS produces the same output. Used for restart attempts
+ * k >= 1 so that the restart sequence is reproducible: run(s, L, B) twice yields
+ * identical sequence of attempts and thus identical final output (DET holds for
+ * the (seed, budget) contract). We use a finalizer-style mix (inspired by
+ * splitmix32 / murmur finalizer, using constants also present in mulberry32)
+ * to scramble base ^ (k * golden) into a well-distributed u32 seed.
+ *
+ * Attempt 0 is deliberately the raw `seed` (no call to this) — this preserves
+ * exact pre-H12 behavior for any first-try success, so committed harness seeds
+ * and speed measurements are unchanged.
+ *
+ * Not exported; internal to the restart logic in run().
+ */
+function deriveRestartSeed(baseSeed: number, k: number): number {
+  let z = ((baseSeed >>> 0) ^ ((k * 0x9e3779b9) >>> 0)) >>> 0;
+  z = (z ^ (z >>> 16)) >>> 0;
+  z = Math.imul(z, 0x85ebca6b) >>> 0;
+  z = (z ^ (z >>> 13)) >>> 0;
+  z = Math.imul(z, 0xc2b2ae35) >>> 0;
+  z = (z ^ (z >>> 16)) >>> 0;
+  return z;
 }
