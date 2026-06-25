@@ -184,6 +184,7 @@ export class SimpleTiledModel extends Model {
     // propData: stores t2 ids (0 <= t2 < T) → if T<256 Uint8 else ... (exact for our tilesets).
     // propLen: stores list lengths (≤ T) → Uint8 auto (same rule).
     // propStart: stores offsets into propData (0 <= start < total); for committed <65536 → Uint16 (optional).
+    // H43: propCompatOffset stores t2*4+d (0 <= offset < T*4), parallel to propData.
     // prop* built ONCE here (ctor); constant across runs; H10 fixpoint does NOT snapshot them.
     // No arithmetic on propData values (pure ids, read-only in propagate) → no wrap concern.
     const PropDataCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor =
@@ -192,24 +193,34 @@ export class SimpleTiledModel extends Model {
       T < 256 ? Uint8Array : T < 65536 ? Uint16Array : Int32Array;
     const PropStartCtor: Uint16ArrayConstructor | Int32ArrayConstructor =
       total < 65536 ? Uint16Array : Int32Array;
+    const PropCompatOffsetCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor =
+      T * 4 < 256 ? Uint8Array : T * 4 < 65536 ? Uint16Array : Int32Array;
 
     const propData = new PropDataCtor(total);
+    const propCompatOffset = new PropCompatOffsetCtor(total);
     const propStart = new PropStartCtor(PT);
     const propLen = new PropLenCtor(PT);
     let pos = 0;
     for (let k = 0; k < PT; k++) {
+      const d = (k / T) | 0;
       const lst = propLists[k];
       propStart[k] = pos;
       propLen[k] = lst.length;
-      for (let i = 0; i < lst.length; i++) propData[pos + i] = lst[i];
+      for (let i = 0; i < lst.length; i++) {
+        const t2 = lst[i];
+        propData[pos + i] = t2;
+        propCompatOffset[pos + i] = t2 * 4 + d;
+      }
       pos += lst.length;
     }
     this.propData = propData;
+    this.propCompatOffset = propCompatOffset;
     this.propStart = propStart;
     this.propLen = propLen;
     this.PropDataCtor = PropDataCtor;
     this.PropLenCtor = PropLenCtor;
     this.PropStartCtor = PropStartCtor;
+    this.PropCompatOffsetCtor = PropCompatOffsetCtor;
   }
 
   /** Debug grid of resolved tile-variant names. Empty where unresolved. */

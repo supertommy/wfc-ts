@@ -1904,3 +1904,56 @@ TRIZ translations:
    Collapse a small batch of spatially separated MRV cells before a propagation drain, then rely on deterministic restarts if stale choices create contradictions. This could reduce observe→propagate cycles, but it risks success/order and must be script-local/full-run first. It is a later, high-risk candidate, not the next move.
 
 Decision: CONTINUE. The ideation pass did yield a genuinely new low-risk high-payoff candidate: H43. It is not another queue/algorithm rewrite; it attacks the common-case arithmetic inside the already-winning AC-4 decrement loop. Next iteration should implement H43 in `src-optimized/` and gate normally.
+
+## Hypothesis H43 — precomputed compatible offsets for propagation inner loop [KEPT]
+
+Hypothesis: remove common-case arithmetic and tile-id dependency from the AC-4 decrement wall. Precompute a `propCompatOffset` array parallel to `propData`, where `propCompatOffset[start+l] = t2*4+d`. The propagation hot loop can decrement `compatible[base2 + propCompatOffset[p]]` and only read `propData[p]` on the uncommon zero-support branch that calls `ban(i2,t2)`.
+
+Change:
+- Added `Model.propCompatOffset` plus `PropCompatOffsetCtor` and footprint accounting.
+- Built `propCompatOffset` in `SimpleTiledModel` alongside `propData`/`propStart`/`propLen`; auto-narrowed by `T*4` (`Uint8Array` for current tilesets).
+- Changed `propagate()` inner loop from `const t2 = propData[start+l]; cidx = base2 + t2*4 + d` to `const p = start+l; --compatible[base2 + propCompatOffset[p]]; if zero, read propData[p] for ban`.
+- AC-4 semantics, propagation order, and public API unchanged.
+
+Gates:
+
+```text
+bun run typecheck
+PASS
+
+bun run harness/prove-harness.ts
+FINAL: PASS — harness proven against identity copy (gate: valid + deterministic)
+```
+
+Measurement:
+
+Initial H43 run:
+```text
+knots-standard-48:   opt 1.083ms / 1.116ms
+circuit-turnless-34: opt 2.481ms / 2.540ms
+rooms-30:            opt 1.321ms / 1.284ms
+```
+
+Apples-to-apples baseline without H43 (temporary checkout, then H43 reapplied):
+```text
+baseline knots-standard-48:   opt 1.078ms / 1.067ms
+baseline circuit-turnless-34: opt 2.729ms / 2.990ms
+baseline rooms-30:            opt 1.315ms / 1.321ms
+```
+
+Higher-rep A/B:
+```text
+H43, median-of-11:
+knots-standard-48:   ref 10.581ms | opt 1.024ms | speedup 10.33x
+circuit-turnless-34: ref  7.155ms | opt 2.437ms | speedup  2.94x
+rooms-30:            ref  3.391ms | opt 1.151ms | speedup  2.95x
+
+baseline, median-of-11:
+knots-standard-48:   ref 10.575ms | opt 1.035ms | speedup 10.22x
+circuit-turnless-34: ref  7.153ms | opt 2.539ms | speedup  2.82x
+rooms-30:            ref  3.284ms | opt 1.117ms | speedup  2.94x
+```
+
+Decision: KEEP. H43 is byte-id/semantics-preserving, passes the gate, and shows a repeatable circuit win (~4-10% depending run) while knots is flat-to-slightly-better and rooms is noise-flat. The extra memory is one narrow `propCompatOffset` entry per `propData` entry (tiny; current propData is already <2KB on committed tilesets), acceptable under SPEED > memory.
+
+Learning: TRIZ Preliminary Action paid off where queue/algorithm rewrites did not: move arithmetic out of the common-case decrement wall without changing the solver shape. Next candidate: H44 precomputed neighbor compatible bases (`neighbor*T4`) to remove one outer-loop multiply per popped ban/direction. It is lower payoff but composes cleanly with H43.

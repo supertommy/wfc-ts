@@ -166,6 +166,10 @@ export abstract class Model {
   protected propData: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
   protected propStart: Uint16Array | Int32Array = new Int32Array(0);
   protected propLen: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
+  // H43: parallel to propData; stores t2*4+d for the matching entry so the hot
+  // decrement path can address compatible without per-iter multiply/add and only
+  // read propData's tile id on the uncommon zero-support branch.
+  protected propCompatOffset: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
   // Flattened AC-4 support counts: compatible[i*T4 + t*4 + d]. Hits 0 => ban.
   // H23: auto-narrowed (Uint8/16/Int32 chosen in init by maxPropLen); --/===0 identical.
   protected compatible: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
@@ -226,6 +230,7 @@ export abstract class Model {
   protected PropDataCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
   protected PropLenCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
   protected PropStartCtor: Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
+  protected PropCompatOffsetCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
 
   // H27: chosen narrow ctors for stackT (pattern ids ≤T), stackI (cell ids ≤count),
   // dirtyHeapCells (same as stackI). Mirror H23/H26 auto-select in init(). Stored for
@@ -612,7 +617,7 @@ export abstract class Model {
   }
 
   private propagate(): boolean {
-    const { propData, propStart, propLen, compatible, stackI, stackT, neighbors, T4, T } = this;
+    const { propData, propCompatOffset, propStart, propLen, compatible, stackI, stackT, neighbors, T4, T } = this;
     while (this.stacksize > 0) {
       this.stacksize--;
       const i1 = stackI[this.stacksize];
@@ -628,9 +633,10 @@ export abstract class Model {
         const base2 = i2 * T4;
 
         for (let l = 0; l < len; l++) {
-          const t2 = propData[start + l];
-          const cidx = base2 + t2 * 4 + d;
-          if (--compatible[cidx] === 0) this.ban(i2, t2);
+          const p = start + l;
+          if (--compatible[base2 + propCompatOffset[p]] === 0) {
+            this.ban(i2, propData[p]);
+          }
         }
       }
     }
@@ -856,6 +862,7 @@ export abstract class Model {
     bytes += this.wave.byteLength;
     bytes += this.compatible.byteLength;
     bytes += this.propData.byteLength;
+    bytes += this.propCompatOffset.byteLength;
     bytes += this.propStart.byteLength;
     bytes += this.propLen.byteLength;
     bytes += this.stackI.byteLength;

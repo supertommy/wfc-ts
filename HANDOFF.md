@@ -148,7 +148,8 @@ Round 4 progress:
 - Iteration 4 H41 static default-MRV specialized propagation passed gates but regressed full-run speed, so the model change was reverted.
 - Iteration 5 H40 propagation ordering prototype was correct and showed a consistent FIFO drain-only win (~1.1-1.17x on circuit/rooms).
 - Iteration 6 H42 minimal FIFO propagation passed gates but regressed full-run speed, so the model change was reverted.
-- Iteration 7 STALL→IDEATE (TRIZ) found new candidates. Continue with H43 first: precompute `propCompatOffset[start+l] = t2*4+d` so the propagation inner loop decrements `compatible[base2+offset]` and reads `propData` only on zero. This preserves AC-4 semantics and directly targets the common-case decrement wall. H44 neighbor bases and H45 speculative observe batching are lower-priority follow-ups.
+- Iteration 7 STALL→IDEATE (TRIZ) found new candidates.
+- Iteration 8 H43 precomputed `propCompatOffset[start+l]=t2*4+d` was KEPT: gates pass, circuit improved in A/B (~4-10%), knots flat/slightly better, rooms noise-flat, tiny memory cost. Next candidate: H44 precomputed neighbor compatible bases (`neighbor*T4`) to remove outer-loop base multiply; lower payoff but composes with H43.
 
 The GPU ratchet loop is also STOPPED. The no-spin WebGPU paths tested after compact did not produce a viable crossover.
 
