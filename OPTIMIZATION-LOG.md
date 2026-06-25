@@ -200,3 +200,40 @@ most t2 are live, so branch rarely skips.)
 log+readme, revert).
 
 (The Round 2 baseline profile is recorded above; it drove picking H5 first.)
+
+## Hypothesis 6 — batch heap updates (coalesce per-cell decrease-key/remove on ban)  [KEPT]
+
+**Hypothesis:** Post-H4, ban+heap is second cost at 25-31% (prop is first). Sub-profile of ban phase
+(before impl) showed heap decrease-key/remove inside ban accounted for ~31-46% of ban's own time
+(~8-12% overall). Every ban(i,t) paid an immediate O(log) heap update/remove (or push). Large-T
+inputs like circuit (T=36, ~40k bans/run) pay heavily. Batch: move sift work out of ban — ban()
+only appends i to a dirty list (cheap, no sifting); a flush (with gen-based dedup per cell) is
+called once before extract-min in nextUnobservedNode, so only *distinct* dirtied cells pay the
+update/remove. Observe alone (T-1 bans to same cell) drops from O(T) sifts to 1. Flush timing
+preserves exact heap state at selection points => same min chosen as immediate updates.
+Tier-2 (algorithmic, like H4), gate=VALID+DET (compare* informational, already FAIL since H4).
+
+**Change:** Single file `src-optimized/model.ts` (H6 batch fields + alloc in init; ban marks dirty
+only; new flushHeapUpdates(); call flush in nextUnobservedNode; reset in clear; header comments).
+No change to entropy-heap.ts. (Dupe-lazy push was considered but batching defers more work.)
+
+**Sub-profile (pre-change, via temp instr + revert):** heap ops ~30-40% of ban time on the three inputs.
+
+**Measurement (median-of-5, harness/measure-speedup.ts protocol; before on clean post-H4 checkout,
+then patch reapplied for after; same machine):**
+
+| input               | ref ms | opt-before | opt-after | speedup-before | speedup-after |
+|---------------------|--------|------------|-----------|----------------|---------------|
+| knots-standard-48   | ~10.7  | 2.028 ms   | 1.970 ms  | 5.24x          | 5.43x         |
+| circuit-turnless-34 | ~7.2   | 4.963 ms   | 4.702 ms  | 1.44x          | 1.55x         |
+| rooms-30            | ~3.5   | 2.544 ms   | 2.132 ms  | 1.37x          | 1.65x         |
+
+**Gate:** `npx tsc --noEmit` clean; `bun run harness/prove-harness.ts` : VALID+DET on all inputs
+(viol=0); compare* FAIL (expected Tier-2 since H4). DET re-runs matched.
+
+**Decision:** KEEP (committed). Meets criteria: VALID+DET pass; knots-48 no regression (2.028→1.970,
+within noise + slight gain); circuit and rooms both improve (circuit ~5%, rooms ~16% on opt ms).
+Batching successfully moved decrease-key cost off the per-ban hot path.
+
+**Cost:** ~1 LLM turn + ~4min wall (subprofile 3 runs + revert, before 3x measure5, implement+edit,
+typecheck+prove, after 3x measure5, gate, log+readme, commit).
