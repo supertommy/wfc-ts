@@ -87,8 +87,11 @@
 //   wrap 0→255... back to 0. Tier-1 (identical counts → byte-id outputs).
 //   footprintBytes sums .byteLength → auto reports the win.
 //
-// H26 (next): apply identical cache-narrow to propData (READ in inner t2=propData[start+l] loop),
+// H26 (prior): apply identical cache-narrow to propData (READ in inner t2=propData[start+l] loop),
 //   propLen, (optionally propStart). No underflow arithmetic on ids (pure reads); auto by T.
+// H27 (this): narrow propagation stack (stackT by T, stackI/dirty by count) + dirty list.
+//   ~3× smaller stack family (Uint8+2×Uint16 vs 3×Int32). Memory win primary; pop in propagate
+//   gets marginal cache benefit (one read/iter). Stack empty at H10 snapshot. Tier-1 (ids same).
 //
 // PRNG: mulberry32, same as the reference (deterministic contract).
 
@@ -163,8 +166,10 @@ export abstract class Model {
   protected compatible: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
   protected observed: Int32Array = new Int32Array(0);
 
-  protected stackI: Int32Array = new Int32Array(0);
-  protected stackT: Int32Array = new Int32Array(0);
+  // H27: auto-narrowed (stackT by T<256→Uint8; stackI+dirty by count<65536→Uint16).
+  // Pushed on ban, popped in propagate inner (cache win marginal; memory main). Tier-1.
+  protected stackI: Uint16Array | Int32Array = new Int32Array(0);
+  protected stackT: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
   protected stacksize = 0;
   protected observedSoFar = 0;
 
@@ -183,7 +188,7 @@ export abstract class Model {
 
   // H6: batching for heap updates (coalesce per-cell bans into one decrease-key/remove per phase)
   // Dirty list populated in ban(); flushed (with dedup) in nextUnobservedNode before extract.
-  protected dirtyHeapCells: Int32Array = new Int32Array(0);
+  protected dirtyHeapCells: Uint16Array | Int32Array = new Int32Array(0);
   protected dirtyCount = 0;
   protected heapUpdateGen: Uint32Array = new Uint32Array(0);
   protected heapGen = 0;
@@ -199,6 +204,14 @@ export abstract class Model {
   protected PropDataCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
   protected PropLenCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
   protected PropStartCtor: Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
+
+  // H27: chosen narrow ctors for stackT (pattern ids ≤T), stackI (cell ids ≤count),
+  // dirtyHeapCells (same as stackI). Mirror H23/H26 auto-select in init(). Stored for
+  // symmetry + reports. Allocated in init() (cap=count*T els); .byteLength auto-shrinks fp.
+  // Stack drained (size=0) at H10 clear fixpoint snapshot → no content-snap impact.
+  protected StackTCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
+  protected StackICtor: Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
+  protected DirtyHeapCellsCtor: Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
 
   // H10: cached post-clear fixpoint state (wave + compatible + sums + entropies + observed)
   // after boundary bans + initial propagate (the maximally-pruned start state for this
@@ -259,6 +272,15 @@ export abstract class Model {
       }
     }
 
+    // H27: auto-select narrowest for stackT (by T), stackI + dirtyHeapCells (by count).
+    // T<256 → Uint8 for stackT (exact); count<65536 → Uint16 for I/dirty (our grids).
+    // Mirrors H23/H26. No arith on stored ids → safe. Affects live only (H10 stacksize=0).
+    {
+      this.StackTCtor = T < 256 ? Uint8Array : T < 65536 ? Uint16Array : Int32Array;
+      this.StackICtor = count < 65536 ? Uint16Array : Int32Array;
+      this.DirtyHeapCellsCtor = count < 65536 ? Uint16Array : Int32Array;
+    }
+
     // wave: all 1 (everything possible). compatible: filled by clear().
     this.wave = new Uint8Array(count * T); // zeroed; clear() sets the valid cells to 1
     this.compatible = new this.CompatibleCtor(count * T4);
@@ -285,12 +307,12 @@ export abstract class Model {
     this.entropyHeap = new EntropyHeap(count);
 
     const stackCap = count * T;
-    this.stackI = new Int32Array(stackCap);
-    this.stackT = new Int32Array(stackCap);
+    this.stackI = new this.StackICtor(stackCap);
+    this.stackT = new this.StackTCtor(stackCap);
     this.stacksize = 0;
 
     // H6 batch dirty list (reused cap sufficient; distinct dirtied << bans per phase)
-    this.dirtyHeapCells = new Int32Array(stackCap);
+    this.dirtyHeapCells = new this.DirtyHeapCellsCtor(stackCap);
     this.dirtyCount = 0;
     this.heapUpdateGen = new Uint32Array(count);
     this.heapGen = 0;
@@ -718,6 +740,7 @@ export abstract class Model {
    * layout changes (e.g. bitpacking). The memory-axis gate (harness/memory.ts)
    * uses this to judge memory-efficiency candidates. Excludes the tileset/weights
    * definition (shared, untimed) and the observed[] output buffer (count*4, fixed).
+   * H27: stack* + dirty now narrower via ctors; .byteLength auto-reflects the shrink.
    */
   footprintBytes(): number {
     let bytes = 0;

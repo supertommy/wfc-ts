@@ -815,3 +815,57 @@ paired stash-before/after on same machine load were consistent in sign/magnitude
 Next candidate recommended (per return spec): H27 (stack narrow) or H28 (sumsOfOnes), or
 re-profile optimized post-H26 to quantify if prop % dropped enough for diminishing returns;
 then H7 observe or new ideation for further.
+
+## Hypothesis 27 — stackT Int32→Uint8 + stackI/dirty Int32→Uint16 (narrow prop stack + batcher) [KEPT]
+
+**Hypothesis:** Apply the H23/H26 cache-narrowing technique to the last big Int32 buffers in the
+propagation path: the ban stack (stackI/stackT) and H6 dirty list. stackT holds t < T (≤T<256
+for committed → Uint8 exact); stackI + dirty hold i < count (≤count<65536 on our grids → Uint16
+exact). Written on every ban, read on every propagate pop (LIFO). ~3× smaller stack-family slice
+(which was ~33% of footprint for circuit per 2*cap*4B) → meaningful memory win; marginal cache
+benefit on the (non-dominant) pop read. Tier-1 (same id values → same ban order/seq → byte-id
+outputs vs post-H26). Stack is empty (stacksize=0) at H10 fixpoint capture → no snapshot change
+needed; stacksize scalar unaffected. Auto-select ctors stored, alloc in init() by T/count;
+footprint uses .byteLength auto-reflects. All our inputs select Uint8/Uint16/Uint16.
+
+**Change:** One file only, per rules: `src-optimized/model.ts`. Updated decls (union types),
+added Stack*Ctor / Dirty*Ctor fields + H27 comments (header + decl + init select + alloc +
+footprint doc). Selection block in init() after H23 (T/count known; no scan needed):
+`StackTCtor = T<256?Uint8:.. ; StackICtor=count<65536?Uint16:Int32; ...` . Allocs use `new
+this.*Ctor(stackCap)` (cap still count*T els). Dirty same. Accesses (push/pop/[] = / reads /
+stacksize++/-- / dirtyCount) unchanged and numeric. No other files (stack choice inside model
+init, unlike prop built in subclass ctor). Temp probe removed pre-commit. No debug left.
+
+**Gate + Measure (followed optimize-one.md + task spec exactly; all from real harness; no fab):**
+- `npx tsc --noEmit` clean (strict) before/after.
+- `bun run harness/prove-harness.ts`: VALID+DET (viol=0) on pre+post; DET checksums re-runs match;
+  compare* FAIL unchanged (Tier-1 after H4). Gate PASS.
+- SPEED (must not regress for memory candidate): `harness/measure-speedup.ts * 5` median-of-5;
+  before via `git stash` of clean post-H26, after on patch; multiple paired dances on same machine:
+
+| input               | ref ms  | opt-before | opt-after | speedup-b | speedup-a | auto-type     |
+|---------------------|---------|------------|-----------|-----------|-----------|---------------|
+| knots-standard-48   | ~10.57  | 1.489 ms   | 1.479 ms  | 7.10x     | 7.21x     | Uint8/Uint16/Uint16 |
+| circuit-turnless-34 | ~6.82-7 | 2.953 ms   | 3.004 ms  | 2.31x     | 2.32x     | Uint8/Uint16/Uint16 |
+| rooms-30            | ~3.30   | 1.587 ms   | 1.645 ms  | 2.08x     | 2.01x     | Uint8/Uint16/Uint16 |
+
+  Within noise across paired runs (avg ~0-1.5% delta mixed sign; knots no-reg/slight gain;
+  circ/rooms deltas <0.06ms on ~3ms; consistent with marginal pop effect + JS engine var).
+- MEMORY (the target): `harness/memory.ts` (stack family is major slice):
+  before 650156/1015036/631248 B → after 505004/723724/454848 B
+  (deltas -145152B / -291312B / -176400B ; ~22-29% total fp reduction).
+  Matches  (cap=count*T; save 3B per stackT el + 2B per stackI + 2B per dirty).
+- SUCCESS (Tier-1 unchanged): `bun run harness/success-rate.ts knots-dense-24 50` → 100.0%
+  (unchanged from pre-H27).
+
+**Decision:** KEEP (committed immediately). Meets *exact* keep criteria per Round 3 + optimize-one:
+VALID+DET mandatory; footprint DOWN substantially; NO speed regression (within noise) on
+knots-48 (gain), circuit/rooms; success unchanged. Per spec: "a memory win with no speed
+regression is a KEEP" (even lowest prio axis; free win). Tier-1 confirmed (byte-id outputs).
+Auto-selected types for committed inputs: stackT=Uint8Array, stackI=Uint16Array, dirtyHeapCells=Uint16Array.
+
+**Cost:** stash dances (3 paired full) + ~15×(3-5) measure + 4×prove + 2×success50 + mem x4 +
+type xN + temp probe+rm + edits log/readme + commit ~25min wall + harness runs.
+
+Next candidate recommended (per return spec): H28 (sumsOfOnes Int32→Uint8), then re-profile
+(src-optimized now post H23/26/27 narrows + MRV) + fresh ideation pass 3 for angles to ~25 iters.
