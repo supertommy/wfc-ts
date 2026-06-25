@@ -76,17 +76,23 @@ GPU Gems scan/stream-compaction, CUB `DeviceScan`/`DeviceSelect` style primitive
 User intent: **continue fixing the GPU algorithm** by applying GPU-native frontier/worklist research.
 Do not jump back to Phase 4c polish yet unless the user changes direction.
 
+Latest post-compact progress:
+- Added `scripts/debug-gpu-lockstep.ts` and logged it in `OPTIMIZATION-LOG.md`.
+- It compares CPU vs GPU after every observe+propagate: full `wave`, full `sumsOfOnes`, and live-slot `compatible`.
+- Deterministic lowest-t lockstep PASS on circuit 8/16 and knots 8/16.
+- Forced-random lockstep PASS on circuit-16 seed0 and knots-16 seeds 0/12345.
+- Key finding: chained atomic-append AC-4 frontier propagation + sums are correct for full small-grid solves when observes are deterministic or CPU-forced. Atomic append is **not currently the proven fault**.
+- Lifecycle fact: after a cascade drains, the active/current frontier count is 0 but the inactive ping-pong buffer often has stale nonzero count. That is safe only if every observe phase resets/seeds a known buffer and starts from the matching parity.
+
 Recommended next technical step:
-1. Recreate or build a **small, committed debug prototype** (not shipped API) focused on correctness,
-   not speed.
-2. Disable randomness: MRV cell + lowest live tile.
-3. Run tiny grids (`circuit` 8/16, maybe `knots` 8/16) in **CPU/GPU lockstep**.
-4. After each observe+propagate, read GPU `wave`, `compatible`, `sumsOfOnes`, and both frontier
-   counts; compare to CPU after the same step.
-5. Stop at the first divergence and classify: missing enqueue, dropped frontier, wrong ping-pong
-   parity, insufficient drain, or stale selection.
-6. If atomic append worklist stays fragile, redesign propagation as Gunrock-style:
-   `frontier -> advance candidates -> filter/support-hit-zero -> scan/compact -> nextFrontier`.
+1. Rebuild a **minimal persistent/chunked prototype** from the passing lockstep kernels, not from the deleted throwaway.
+2. Keep a readback/debug mode until it matches step-by-step.
+3. Add one GPU-owned feature at a time:
+   - parallel MRV select / done flag,
+   - GPU PRNG weighted pick,
+   - unrolled chunked no-readback execution.
+4. Try to reproduce Stage 3 invalidity with the new infrastructure. If reproduced, compare the first divergent step.
+5. Only switch to scan/compact if a real atomic-append frontier lifecycle bug is proven.
 
 The pure-JS solver remains the shippable path. Treat GPU as a research branch until it passes
 VALID+DET on small grids and then crosses over on large heavy grids.
@@ -110,12 +116,13 @@ ideation pass; current pure-JS candidates are exhausted.
 3. `src-optimized/README.md` — optimization candidate list and Round 3 conclusion.
 4. `src-optimized/webgpu/propagate-gpu.ts` — correct single-propagation GPU backend + incremental hybrid path.
 5. `src-optimized/webgpu/gpu-runner.ts` — Stage 2 hybrid full-run runner (correct but too slow).
-6. `scripts/webgpu-boundary-probe.ts` — latest boundary-crossing feasibility probe.
-7. `scripts/webgpu-prototype-v2.ts` — single-propagation large-grid crossover prototype.
-8. KB: `/Users/tommy/Documents/projects/superhq/tommyato-knowledge/investigations/gpu-frontier-data-structures-for-wfc.md`.
-9. `prompts/optimize-one.md` — CPU ratchet methodology if needed.
-10. `HARNESS-BASELINE.md` — the gate contract (valid+det; compare informational).
-11. `benchmarks/external/RESULTS.md` — external comparison (needs post-Round-3 refresh before release).
+6. `scripts/debug-gpu-lockstep.ts` — current CPU/GPU lockstep debugger; propagation/sums PASS.
+7. `scripts/webgpu-boundary-probe.ts` — latest boundary-crossing feasibility probe.
+8. `scripts/webgpu-prototype-v2.ts` — single-propagation large-grid crossover prototype.
+9. KB: `/Users/tommy/Documents/projects/superhq/tommyato-knowledge/investigations/gpu-frontier-data-structures-for-wfc.md`.
+10. `prompts/optimize-one.md` — CPU ratchet methodology if needed.
+11. `HARNESS-BASELINE.md` — the gate contract (valid+det; compare informational).
+12. `benchmarks/external/RESULTS.md` — external comparison (needs post-Round-3 refresh before release).
 
 ## Match contract (the gate)
 
