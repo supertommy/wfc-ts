@@ -1792,3 +1792,49 @@ SPEEDUP rooms-30 (median-of-5): ref 3.314ms | opt 1.468ms | speedup 2.26x
 Decision: REVERT. Although gates passed, full-run speed regressed materially on the propagation-bound targets compared with the established Round-3 optimized solver (circuit/rooms should be ~2.7x/~3.2x vs reference, not ~1.8x/~2.2x). The H39 `new Function` result did not transfer to a hand-written method: likely the larger method/branch dispatch and duplicated code shape caused JIT inlining/register-pressure/deopt costs that swamp the micro drain benefit. This confirms why script-local drain timings are only a lead; full-run gate decides.
 
 Learning: do not promote broad hand-written specialization in `Model` without a full-run win. The next Round 4 candidate should return to low-risk measurement: H40 propagation ordering (FIFO/spatial/ring vs current LIFO) as a script-local or isolated optional variant, then stop/ideate if it fails.
+
+## Hypothesis H40 — propagation work ordering variants [PROTOTYPE-PASSED]
+
+Hypothesis: AC-4's unit of work is already right, but the order of pending bans may affect cache locality. Test FIFO vs current LIFO and a few direction orders while keeping the exact same support-count transition.
+
+Change: added script-local prototype `scripts/cpu-propagation-order-proto.ts` only. The shippable optimized solver is untouched. The prototype:
+- snapshots the post-observe pending stack and state;
+- runs local AC-4 propagation variants with only pending-ban order / direction order changed;
+- compares final `wave` and `sumsOfOnes` against current optimized `propagate()`;
+- reports drain-only timing, excluding reset/clone like a promoted in-place ordering change.
+
+Verification:
+
+```text
+bun run typecheck
+PASS
+
+REPS=1000 bun run scripts/cpu-propagation-order-proto.ts
+=== CPU H40 PROPAGATION ORDER PROTOTYPE ===
+median reps=1000; drainMs excludes reset/clone like a promoted in-place ordering change; variants use same local AC-4 transition, changing only pending-ban/direction order
+
+knots-standard size=48 ... cpuProp=0.0011 ok=ok
+variant     | drainMs | speed-vs-cpu | processed | pushed | wDiff | sDiff | ok
+fifo-0123   |  0.0009 |        1.238 |        28 |     20 |     0 |     0 | ok
+fifo-3210   |  0.0009 |        1.238 |        28 |     20 |     0 |     0 | ok
+fifo-1032   |  0.0009 |        1.238 |        28 |     20 |     0 |     0 | ok
+
+circuit-turnless size=34 ... cpuProp=0.0380 ok=ok
+fifo-0123   |  0.0340 |        1.115 |       775 |    740 |     0 |     0 | ok
+fifo-3210   |  0.0339 |        1.119 |       775 |    740 |     0 |     0 | ok
+fifo-1032   |  0.0345 |        1.100 |       775 |    740 |     0 |     0 | ok
+
+rooms size=30 ... cpuProp=0.0125 ok=ok
+fifo-0123   |  0.0106 |        1.173 |       395 |    368 |     0 |     0 | ok
+fifo-3210   |  0.0106 |        1.177 |       395 |    368 |     0 |     0 | ok
+fifo-1032   |  0.0106 |        1.177 |       395 |    368 |     0 |     0 | ok
+
+circuit-turnless size=128 ... cpuProp=0.0383 ok=ok
+fifo-0123   |  0.0342 |        1.119 |       775 |    740 |     0 |     0 | ok
+fifo-3210   |  0.0341 |        1.123 |       775 |    740 |     0 |     0 | ok
+fifo-1032   |  0.0343 |        1.115 |       775 |    740 |     0 |     0 | ok
+```
+
+Decision: PROTOTYPE-PASSED, not yet promoted. Correctness passed (`wDiff=0`, `sDiff=0`) for every ordering. FIFO variants show a consistent drain-only win over current `propagate()` on the propagation targets: ~1.11x on circuit, ~1.17x on rooms, ~1.12x on circuit-128. Direction order had little effect; `fifo-0123` is the simplest candidate because it changes only stack discipline, not neighbor order.
+
+Next candidate: H42 promote FIFO propagation order in `src-optimized/model.ts` with full gates. Implement as a minimal queue discipline change if possible: process pending `(cell,tile)` in insertion order while appending derived bans at the tail, preserve `ban()` semantics and dirty-list behavior, then run `typecheck`, `prove-harness`, and full `measure-speedup` on knots/circuit/rooms. If full-run speed regresses like H41, revert.

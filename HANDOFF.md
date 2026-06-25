@@ -145,7 +145,8 @@ Round 4 progress:
 - Iteration 1 H37 dirty-cell bitset propagation was correct but slower; rejected.
 - Iteration 2 H38 cell-batched AC-4 was correct but slower; rejected.
 - Iteration 3 H39 generated propagation kernel was correct and faster on circuit/rooms single-propagation drains, but used `new Function`; do **not** ship eval.
-- Iteration 4 H41 static default-MRV specialized propagation passed gates but regressed full-run speed, so the model change was reverted. Next candidate is H40 propagation ordering (FIFO/spatial/ring vs current LIFO), then ideate/stop if no win.
+- Iteration 4 H41 static default-MRV specialized propagation passed gates but regressed full-run speed, so the model change was reverted.
+- Iteration 5 H40 propagation ordering prototype was correct and showed a consistent FIFO drain-only win (~1.1-1.17x on circuit/rooms). Next candidate is H42: promote simple FIFO queue discipline in `src-optimized/model.ts` with full gates; revert if full-run speed regresses.
 
 The GPU ratchet loop is also STOPPED. The no-spin WebGPU paths tested after compact did not produce a viable crossover.
 
