@@ -1621,3 +1621,40 @@ Verdict: correct, but reject as a full-run performance path. Bulk relaxation exa
 Learning: changing to dense GPU relaxation solves the synchronization shape but loses on work volume. The remaining plausible no-spin frontier branch is not dense scanning; it is reducing the worklist backend's over-dispatch. Current worklist kernels dispatch `ceil(count*T/64)` groups every frontier layer even when the actual frontier is tiny. A GPU-side indirect-dispatch argument derived from the frontier count could reduce shader overwork without readback.
 
 Next ratchet hypothesis: indirect frontier dispatch. Prototype a single-propagation worklist backend that writes `dispatchWorkgroupsIndirect` arguments from the current frontier count on GPU, then dispatches only enough workgroups for that frontier layer. Measure correctness and speed versus the current max-workgroups worklist and CPU. If that also fails, the no-spin WebGPU path is likely exhausted for this solver shape.
+
+### GPU ratchet iteration 5 — indirect frontier dispatch
+
+Hypothesis: the safe worklist GPU backend wastes shader work by dispatching `ceil(count*T/64)` workgroups every frontier layer even when the live frontier is tiny. Use a GPU prepare kernel to write `dispatchWorkgroupsIndirect` args from `curBanned[0]`, then launch only `ceil(frontier/64)` workgroups for that layer. This isolates over-dispatch while preserving the exact AC-4 worklist semantics and true frontier-empty readback per layer.
+
+Added `scripts/webgpu-indirect-frontier-proto.ts`:
+- Script-local single-propagation backend test.
+- Same strong observe-like trigger as iteration 4.
+- Same final-wave byte comparison against CPU AC-4 and current safe worklist GPU.
+- Per layer: zero next frontier, prepare indirect args from current count, indirect-dispatch fused worklist kernel, read next count.
+
+Verification:
+
+```text
+bun run typecheck
+PASS
+
+bun run scripts/webgpu-indirect-frontier-proto.ts
+case                 | size |  cell | keep | banTot | CPU ms  | work GPU | indirect GPU | layers | sumFront | maxFront | workDf | indDiff | cpu
+---------------------|------|-------|------|--------|---------|----------|--------------|--------|----------|----------|--------|---------|----
+circuit-turnless     |   34 |   595 |    7 |     775 |   0.075 |     9.014 |      14.567 |      8 |      775 |      183 |       0 |        0 | ok
+circuit-turnless     |   64 |  2080 |    7 |     775 |   0.057 |     8.940 |       4.474 |      8 |      775 |      183 |       0 |        0 | ok
+circuit-turnless     |  128 |  8256 |    7 |     775 |   0.048 |    16.658 |       6.126 |      8 |      775 |      183 |       0 |        0 | ok
+circuit-turnless     |  256 | 32896 |    7 |     775 |   0.074 |    32.187 |       5.107 |      8 |      775 |      183 |       0 |        0 | ok
+knots-standard       |   48 |  1176 |    6 |      28 |   0.002 |     1.741 |       1.836 |      2 |       28 |       20 |       0 |        0 | ok
+```
+
+Verdict: correct and the best GPU micro-result in this final branch, but still not a viable solver path. Indirect dispatch removes over-dispatch effectively: circuit-256 single propagation improves from `32.2ms` to `5.1ms`. However, the optimized CPU still completes the same propagation in `0.074ms` (~69x faster). The reason is structural: realistic observe cascades here have small frontiers (`sumFront=775`, `maxFront=183`, `layers=8`), so the CPU's cache-hot typed-array AC-4 loop is extremely hard to beat. The indirect path still pays WebGPU command/readback overhead per layer to prove fixpoint; removing that readback was already tested via fixed epochs/full-GPU chunks and failed on dispatch count/correctness-bound concerns.
+
+Final GPU ratchet verdict: stop. We tested the plausible no-spin WebGPU shapes:
+1. large-grid gate + current hybrid baseline: VALID+DET but catastrophic boundary counts;
+2. fixed-epoch command chunks: fewer submits, still per-observe readback dominated;
+3. command-ordered full-GPU observe chunks: VALID+DET on small cases, but `count*(3+K)` dispatch trains are too slow;
+4. dense bulk relaxation: correct, but too much work volume;
+5. indirect frontier dispatch: fixes over-dispatch, still far slower than CPU and does not solve full-run observe structure.
+
+The shippable path should remain the optimized pure-JS solver. Keep WebGPU artifacts as research/prototypes only. Resume Phase 4c OSS polish next: generalization checks, visualizer, learning guide, packaging, README/external benchmark refresh.
