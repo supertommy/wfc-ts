@@ -97,6 +97,39 @@ export const enum Heuristic {
   Scanline = 2,
 }
 
+/**
+ * Progress / result status yielded by stepRun().
+ * - While running (done:false): emitted every `yieldEvery` observes; includes the
+ *   just-observed cell and current resolved count. Callers (e.g. visualizers) can
+ *   inspect solver state (wave, sumsOfOnes, etc.) between yields.
+ * - At end (done:true): `ok` is the same boolean run() would return; `complete` is
+ *   true only if the grid fully collapsed (no limit/budget abort).
+ *
+ * Cancellation:
+ * - Natural: stop calling .next() / break from for-of / call gen.return().
+ * - AbortSignal (optional, portable): checked at yield points; no DOM/Node dep
+ *   in core (AbortSignal is web standard, present in Node + browsers).
+ *
+ * Example (step every observe, browser-friendly):
+ *   const gen = model.stepRun(seed, -1, 100, 1, signal);
+ *   for (const st of gen) {
+ *     if (st.done) { if (st.ok) renderFinal(model.result()); break; }
+ *     // partial viz: read model.sumsOfOnes / wave / etc. here
+ *     await new Promise(r => requestAnimationFrame(r)); // caller schedules
+ *   }
+ * run() is unchanged (drains internally with huge yieldEvery to keep fast path hot).
+ */
+export interface StepStatus {
+  done: boolean;
+  /** Cell index just observed (only on done:false yields from an observe step). */
+  observedCell?: number;
+  attempt: number;
+  cellsResolved: number;
+  /** Only present on done:true yields. */
+  ok?: boolean;
+  complete?: boolean;
+}
+
 const DX = [-1, 0, 1, 0];
 const DY = [0, 1, 0, -1];
 const OPPOSITE = [2, 3, 0, 1];
@@ -299,6 +332,105 @@ export abstract class Model {
       // contradicted: clear + retry with derived seed (if attempts remain)
     }
     return false;
+  }
+
+  /**
+   * Generator form of the run loop (H16): yields a StepStatus every `yieldEvery`
+   * observes so callers can step/visualize/schedule without blocking (e.g. rAF chunks
+   * in browser). The loop body is intentionally duplicated from run() so the
+   * synchronous fast path (used by harness, measure-speedup, success-rate) has
+   * zero generator or yield-check overhead and remains bit-identical in perf.
+   *
+   * For any (seed, limit, restartBudget), driving stepRun to completion produces
+   * IDENTICAL collapse sequence and final observed[] as run() (hence same VALID+DET).
+   *
+   * Cancellation: break / return() / or pass AbortSignal (checked at each yield point).
+   * Portable (AbortSignal is standard, no scheduler or DOM APIs in the solver).
+   *
+   * run() is untouched (see above).
+   */
+  *stepRun(
+    seed: number,
+    limit: number,
+    restartBudget = 100,
+    yieldEvery = 1,
+    signal: AbortSignal | null = null
+  ): Generator<StepStatus> {
+    if (this.count === 0) this.init();
+
+    let totalObserves = 0;
+    for (let attempt = 0; attempt <= restartBudget; attempt++) {
+      this.clear();
+      const s = attempt === 0 ? seed : deriveRestartSeed(seed, attempt);
+      const random: Random = mulberry32(s);
+      const limitNeg = limit < 0;
+
+      let contradicted = false;
+      for (let l = 0; limitNeg || l < limit; l++) {
+        const node = this.nextUnobservedNode(random);
+        if (node >= 0) {
+          this.observe(node, random);
+          const success = this.propagate();
+          totalObserves++;
+
+          const cellsResolved = this.countResolved();
+
+          if (signal && signal.aborted) {
+            yield { done: true, ok: false, complete: false, attempt, cellsResolved, observedCell: node };
+            return;
+          }
+
+          if (yieldEvery > 0 && (totalObserves % yieldEvery === 0)) {
+            yield { done: false, observedCell: node, attempt, cellsResolved };
+          }
+
+          if (!success) {
+            contradicted = true;
+            break;
+          }
+        } else {
+          // No unobserved node remains: every cell has collapsed to one variant.
+          const { wave, T, observed, count } = this;
+          for (let i = 0; i < count; i++) {
+            const base = i * T;
+            for (let t = 0; t < T; t++) {
+              if (wave[base + t]) {
+                observed[i] = t;
+                break;
+              }
+            }
+          }
+          const cellsResolved = this.count;
+          yield { done: true, ok: true, complete: true, attempt, cellsResolved };
+          return;
+        }
+      }
+      if (!contradicted) {
+        // Limit reached without contradiction (preserve original behavior).
+        const cellsResolved = this.countResolved();
+        const complete = this.isComplete();
+        yield { done: true, ok: true, complete, attempt, cellsResolved };
+        return;
+      }
+      // contradicted: clear + retry with derived seed (if attempts remain)
+      if (signal && signal.aborted) {
+        yield { done: true, ok: false, complete: false, attempt, cellsResolved: this.countResolved() };
+        return;
+      }
+    }
+    yield { done: true, ok: false, complete: false, attempt: restartBudget, cellsResolved: this.countResolved() };
+  }
+
+  /**
+   * O(count) scan for progress reporting in the steppable path (H16).
+   * Only called on yield points (visualizer cadence or when yieldEvery is small),
+   * never in the run() hot path.
+   */
+  protected countResolved(): number {
+    let c = 0;
+    const sums = this.sumsOfOnes;
+    for (let i = 0; i < this.count; i++) if (sums[i] <= 1) c++;
+    return c;
   }
 
   private nextUnobservedNode(random: Random): number {

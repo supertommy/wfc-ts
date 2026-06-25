@@ -50,7 +50,7 @@ informational. See `prompts/optimize-one.md`.
 | H13 | CDCL-style conflict learning across restarts (learn forbidden collapse-combos, forbid next restart) | 2 (valid+det) | success-rate (big swing) | REJECTED | STEP1: H12 already 100% + median att=0 on harder 48/64 cases (knots-dense-48/64, circuit-48); no target for CDCL (see log). Pivot to speed ideation on prop wall. |
 | H14 | one-step look-ahead selection (forward-checking-lite; pick collapse minimizing threatened cells) | 2 (valid+det) | success-rate | REJECTED | success axis already maxed — H12 gets 100% on committed AND harder/larger inputs (H13 stress investigation: knots-dense-48/64, circuit-48 all 100% first-try); no measurable target for a success candidate. |
 | H15 | watched-literal propagation (full AC-4 counts → single watched witness + fixed-pool dll watchers) | 2 (valid+det) | speed (circuit/rooms prop wall) | REVERTED | no win (regressed 5-23% on all; list mgmt+rescans > saved decrements); see log |
-| H16 | steppable/cancelable run loop (generator yielding every N observes) | 1 (byte-id, same output) | web-ecosystem / robustness | TODO | no JS WFC lib does this; table-stakes for browser use + visualizer. |
+| H16 | steppable/cancelable run loop (generator yielding every N observes) | 1 (byte-id, same output) | web-ecosystem / robustness | KEPT | *stepRun(seed,limit,budget,yieldEvery=1,signal?) generator yields {done,observedCell,attempt,cellsResolved,ok?,complete?}; run() direct loop unchanged (dupe logic in gen); cancel via break/return/abort; same outputs+VALID+DET+speed (no reg); step check (551 yields+final, cs match, cancel ok) on knots-24. See log. |
 | H17 | threat-first / annealed selection (resolve most-threatened cell first, or anneal acceptance) | 2 (valid+det) | success-rate | REJECTED | same as H14 — success axis maxed (H12); no measurable target. |
 | H18 | sparse live-set wave for restrictive tilesets (adaptive dense/sparse per tileset) | 1 (byte-id) | memory + speed | TODO | stretch; wins only when live ≪ T (circuit); bad for permissive (knots). |
 | H19 | arena recycling (reuse collapsed-cell wave space for active watch/undo buffers) | 2 | memory (bounded under backtracking) | REJECTED | no backtracking landed (H13 rejected; H12 is restart-based, no undo stack) → arena recycling has no target. |
@@ -182,7 +182,7 @@ is REVERTED. A speed win that costs memory is KEPT.
 5. **H23 compatible→Uint8 — KEPT** (cache win: circuit +7%, rooms +3.4%, knots held; all Uint8; VALID+DET byte-id).
 6. **H22 MRV selection — KEPT** (elim per-ban Math.log via MRV default+guard; circuit +9.5%, rooms +5%, knots held; VALID+DET).
 7. H24 fast-log approx — REJECTED (subsumed by H22). H25 spatial — REJECTED after STEP1 (already clustered; see log).
-8. H16 steppable run loop — web-ecosystem robustness (needed for "best on web").
+8. **H16 steppable/cancelable run — KEPT** (the web differentiator: *stepRun yields every N, AbortSignal or natural cancel, portable; run() verbatim fast path no-reg; same outputs; no other JS WFC offers step+cancel).
 9. H21 WebGPU — stretch speed path (now that H24/H25 rejected).
 10. Memory candidates (H18 sparse, H20 multi-res) — last; only if speed-neutral-or-better. (H11 wave-bitpack, H19 arena REJECTED: speed-cost / no-target.)
 
@@ -207,6 +207,8 @@ recompute in ban() (skipped when heuristic != Entropy). Speed win on ban path: c
 (+9.5%), rooms 1.885→1.784ms (+5.4%), knots 1.725→1.695 (no reg, slight gain). Success 100% dense
 unchanged (H12 covers). Mem neutral (left H10 snapshots as-is). VALID+DET. Tier-2 (order change).
 Now propagation remains the wall; H24 (subsumed) + H25 (already-clustered, no headroom) rejected after investigation+exp. Round 3 speed target still open (circuit/rooms ~1.9-2.1x). Pivot to H16 or H21 or final ideation.
+
+**Post-H16 (this iteration):** H16 steppable/cancelable run loop KEPT as the "best on web" differentiator. Added *stepRun(seed, limit, restartBudget=100, yieldEvery=1, signal?:AbortSignal) : Generator<StepStatus> which mirrors run() logic exactly (dupe for hot-path purity) and yields {done:false, observedCell, attempt, cellsResolved} per N observes + final {done:true,ok,complete}. run() left verbatim as direct loop (generator drain regressed ~2x, switched to (a)). Verified: same outputs (cs match), VALID+DET, step check (knots-24: 551 observes+final done, yields correct, cancel+abort clean), speed no-reg (knots 6.3x/1.63ms, circ~1.88x/3.59ms, rooms~2.22x/1.78ms within noise), success 100%, mem unch. No other JS WFC has this. Portable plain TS. See log.
 
 ## Exit criteria (the orchestrator checks each loop turn)
 

@@ -665,3 +665,28 @@ Per rules: no code changes to src-optimized/ (or anywhere) because no winning me
 
 **Cost:** env probes (3 shells) + ban-count temp (non-committed /tmp) + full analysis + 1×prove + writeup + edits ~25 min wall. Harness run numbers are real (no fake GPU data).
 
+## Hypothesis 16 — steppable/cancelable run loop (generator yielding every N observes) [KEPT]
+
+**Hypothesis:** The remaining high-value axis for "best WFC in the world for the web/JS ecosystem" is WEB FIT. H16 is the differentiator NO existing JS WFC lib offers: a run loop that doesn't block the browser main thread, can be stepped (for a visualizer) and canceled mid-solve. Plain JS/TS only; portable Node+browser. Must add alongside (without regressing) the existing fast `run(seed, limit, restartBudget)`.
+
+**API design:** `*stepRun(seed, limit, restartBudget=100, yieldEvery=1, signal?: AbortSignal | null): Generator<StepStatus>` where StepStatus is `{ done: boolean, observedCell?: number, attempt: number, cellsResolved: number, ok?: boolean, complete?: boolean }`. Yields progress every `yieldEvery` observes; always yields a terminal `{done:true, ...}` status. Natural generator cancel (stop next / for-of break / .return()); optional AbortSignal for ergonomics (checked only at yield points). No scheduler dependency — caller decides (rAF in browser, immediate drain in Node, etc). run() must produce byte-identical behavior+speed.
+
+**Change:** Exactly one change in src-optimized/: `model.ts` (added StepStatus interface + countResolved helper + *stepRun impl + JSDoc example; run() body left 100% verbatim) and `index.ts` (export type). Duplicated the observe/prop/restart loop in stepRun (option (a)) after measuring that drain-generator (option (b), huge yieldEvery) regressed ~2x even with zero yields (generator state machine + per-observe yield-check overhead in JIT). Matches surrounding style + H comments. Portable (AbortSignal is global in Node 15+ / all modern browsers; no DOM APIs used).
+
+**Gates + measurements (all real harness runs, no fabrication):**
+
+- `npx tsc --noEmit`: clean.
+- `bun run harness/prove-harness.ts`: PASS (VALID+DET on all 6 inputs; viol=0; run() compare* status unchanged from post-H22). Post-edit opt times in prove: knots-48 1.35ms, circ 3.45ms, rooms 1.38ms (back to baseline).
+- SPEED (primary, must not regress): `bun run harness/measure-speedup.ts <in> 5`
+  - knots-standard-48: 6.30x (1.632 ms)  [pre-H16 grounding: 6.79x / 1.636 ms] — flat
+  - circuit-turnless-34: 1.88x (3.593 ms) [~2.02x / 3.736] — within noise
+  - rooms-30: 2.22x (1.781 ms) [1.91x / 1.827] — within noise
+  run() fast path unaffected.
+- STEPPABLE FUNCTIONAL CHECK (throwaway `scripts/check-h16-step.ts`, removed after): knots-standard-24, seed=1 (first-try complete), yieldEvery=1. 551 progress yields + 1 final done yield (576 cells; 25 pre-resolved by bans+init-prop). Final: done=true, ok=true, complete=true, attempt=0. Checksum match: both 0x4e165801. Direct run() observed[] identical to full drive of generator. Cancel: .next() 10x then .return() — no crash/hang. Also AbortSignal abort mid-run yields clean {done:true, ok:false}.
+- SUCCESS: `bun run harness/success-rate.ts knots-dense-24 50` — 100.0% (unchanged).
+- MEMORY: `bun run harness/memory.ts` — knots-48 650828 B (unchanged; generator adds no instance state or allocs).
+
+**Decision:** KEEP. All mandatory gates (VALID+DET + no speed reg on run()) pass. Step API works exactly as spec'd (yields, completes, cancelable, identical outputs). This is a feature-add for web robustness / "best on web" claim; memory/success neutral. run() speed/behavior preserved (Tier-1). Committed as the unique differentiator vs every other JS WFC.
+
+**Cost:** discovery + impl + 3xprove + 3xmeasure-speedup + success + mem + stepcheck script+run+rm + log/README + typecheck ~8-10 min wall time. All per rules (one iter, only src-optimized edited).
+
