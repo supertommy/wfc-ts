@@ -15,17 +15,27 @@
 
 ## Success Rate Ratchet — COMPLETED ✅
 
-**H54: LCV with freedom^8 — KEPT** ✅
+**H54: LCV with freedom^3 — KEPT** ✅
 
-Final formula: `weight = baseWeight * (1 + freedom)^8`
+Final formula: `weight = baseWeight * (1 + freedom)^3`
 
 ### Results
 
 | Test Case | Before | After | Improvement |
 |-----------|--------|-------|-------------|
-| Summer 48×48 periodic | 14% | **100%** | **+86pp (∞)** |
+| Summer 48×48 periodic | 14% | **100%** | **+86pp** |
 | Summer 48×48 non-periodic | 92% | **100%** | **+8pp** |
-| Speed | 174ms | 4.5ms | **39× faster** |
+| Speed | 174ms | ~45ms | **~4× faster** |
+| Visual variety | baseline | good | grass/water/sand/cliffs |
+
+### Power Tuning
+
+| Power | Success | Variety | Notes |
+|-------|---------|---------|-------|
+| ^1 | 72% | Best | Original LCV |
+| ^2 | 99% | Good | Almost there |
+| **^3** | **100%** | **Good** | **← Chosen** |
+| ^8 | 100% | Poor | All grass |
 
 ### How It Works
 
