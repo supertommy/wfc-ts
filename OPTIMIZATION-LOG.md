@@ -1451,3 +1451,30 @@ bun run scripts/gate-gpu-propagate.ts
 ```
 
 **Updated verdict:** atomic append, parallel MRV selection, GPU weighted observe, and `sumsOfOnes` maintenance are correct under a true fixpoint drain. The Stage 3 invalidity is best explained by the unsafe fixed-diameter no-readback propagation bound. For a future no-readback/chunked GPU solver, dispatching only grid-diameter layers is invalid; it needs either a safe upper bound (`count*T`, too many dispatches for perf) or a device-side convergence/indirect/persistent mechanism that proves frontier empty before the next observe.
+
+### Persistent-kernel full-GPU prototype — correct on tiny case, not performant
+
+Added `scripts/webgpu-persistent-proto.ts` as a research-only prototype. It collapses a full WFC solve into one GPU dispatch + one final readback by putting selection, weighted observe, and AC-4 propagation-to-fixpoint inside a persistent WGSL loop.
+
+Implementation notes:
+- Packed buffers to stay under storage binding limits: `wave+sums` in one atomic buffer; `weights` bit-packed after `propData`; barrier/control/best/rng in the tail of `workA`.
+- First attempted all-invocation cross-workgroup barrier. Real dispatches deadlocked once `init()` was fixed and workgroups actually launched.
+- Revised to the only barrier shape that had prior evidence on this backend: one lane per workgroup participates, capped at 64 workgroups, and each participating lane grid-strides over cells/frontier entries.
+- Needed a high spin budget (`500_000_000`) to avoid a false barrier timeout on cold circuit-8 runs.
+
+Measured result (Apple M3 Max / Dawn / Metal, `bun run scripts/webgpu-persistent-proto.ts`):
+
+```text
+--- circuit-turnless-8 seed=0 ---
+JS:         ok=true valid=true ms=2.114
+GPU:        status=complete observes=54 valid=true violations=0 unresolved=0 ms=15.028
+GPU repeat: status=complete observes=54 valid=true ms=7.687 det=PASS
+GPU vs JS:  0.141x
+```
+
+Additional probes during development:
+- `circuit-turnless-16` exceeded the 10s safety timeout with this barrier shape.
+- `knots-standard-8` also exceeded the 10s safety timeout.
+- The all-invocation barrier variant deadlocked on real work. The earlier `webgpu-boundary-probe.ts` barrier only proved small synthetic rounds, not a production persistent kernel with all lanes spinning.
+
+**Verdict:** device-side fixpoint convergence can be correct — the persistent kernel produced a valid deterministic full solve with one final readback — but this WebGPU barrier approach is not the performance path. The overhead/fragility is worse than the optimized JS solver even on tiny grids, and it times out before reaching useful sizes. Next GPU direction, if any, should avoid spin barriers entirely: either command-encoded indirect/chunked work with bounded host sync, or a scan/compact formulation that tolerates fixed epochs without global barriers. The shippable library path remains the optimized JS solver plus the correct-but-slow optional propagation backend.

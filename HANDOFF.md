@@ -105,6 +105,11 @@ Discussion framing for the next session:
 - The only plausible win is a GPU-side convergence mechanism (indirect dispatch / persistent loop / cooperative barrier-like design), but WebGPU portability is the risk.
 - The pure-JS solver remains the shippable path. Treat GPU as research until it passes VALID+DET and crosses over on large heavy grids.
 
+Post-discussion continuation:
+- Added `scripts/webgpu-persistent-proto.ts` to test the most direct performance path: one persistent GPU dispatch owns MRV select, weighted observe, propagation-to-fixpoint, repeat, then one final readback.
+- Result: correct/deterministic on `circuit-turnless-8`, but slow (`15.0ms` cold / `7.7ms` repeat vs JS `2.1ms`, ~0.14x) and barrier-fragile. `circuit-16` and `knots-8` exceeded the safety timeout during probing.
+- Important learning: a persistent spin-barrier can prove device-side convergence, but it is not the performant WebGPU path as implemented. Avoid spin-barrier mega-kernels for the shippable solver. If GPU research continues, pivot to no-spin designs: indirect/chunked command sequences with bounded sync, or scan/compact/fixed-epoch frontier formulations.
+
 ## Open-source finish (after GPU research pauses/concludes)
 
 Once the GPU investigation is paused or resolved, remaining Phase 4c work:
