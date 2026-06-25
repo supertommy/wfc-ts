@@ -742,3 +742,24 @@ Current speed baseline (for context; `measure-speedup median-of-5`):
 
 Next candidate recommended (per return spec): a fresh re-profile of post-H16/H22/H23 optimized (to quantify current % in prop vs other now that observe/ban cleaned), OR ideation pass (TRIZ/first-principles questioning the AC-4 greedy collapse itself) for angles toward ~25 iterations. H20 (multi-res) remains TODO but stretch and changes outputs.
 
+
+## Round 3 ideation pass 2 — apply the H23 cache-narrowing angle to the OTHER hot-loop arrays — iteration 11
+
+Trigger: listed candidates effectively exhausted (H18 rejected, H20 rejected as huge-grids-
+only). Wall still the propagation decrement loop (~60-66%). H23 won by narrowing `compatible`
+Int32→Uint8 (4x cache on the decrement loop). The SAME angle applies to the OTHER typed arrays
+in the propagation hot path that are still Int32 but hold values ≤T<256 (or ≤count<65536):
+
+- H26 propData Int32→Uint8: t2 pattern ids are ≤T<256 (knots 9/circuit 36/rooms 28) → EXACT.
+  propData is READ in the propagate inner loop (`t2 = propData[start+l]`) → 4x smaller → fewer
+  cache misses on the wall. Highest payoff of the three (directly in the 60-66% inner loop).
+  Tier-1 (byte-id). DO NEXT.
+- H27 stackT Int32→Uint8 (pattern ids) + stackI Int32→Uint16 (cell ids ≤count<65536): the
+  propagation stack, pushed every ban + popped every propagate step. Cache + memory. Tier-1.
+- H28 sumsOfOnes Int32→Uint8 (live count ≤T<256) + sumsOfOnes0 cache: the MRV heap key (under
+  H22). Read in nextUnobservedNode + heap. Cache + memory. Tier-1.
+
+H20 (multi-res) REJECTED: huge-grids-only (no benefit on 24-48 committed grids) + macro-tileset
+preprocessing + changes outputs. Future stretch for 256x+ (like H21 WebGPU).
+
+Next: H26 (propData→Uint8), then H27, H28.
