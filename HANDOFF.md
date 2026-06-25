@@ -151,7 +151,9 @@ Round 4 progress:
 - Iteration 7 STALL→IDEATE (TRIZ) found new candidates.
 - Iteration 8 H43 precomputed `propCompatOffset[start+l]=t2*4+d` was KEPT: gates pass, circuit improved in A/B (~4-10%), knots flat/slightly better, rooms noise-flat, tiny memory cost.
 - Iteration 9 H44 precomputed `neighborCompatBase[i*4+d]=neighbor*T4|-1` was KEPT: gates pass, higher-rep A/B improved knots/circuit/rooms (`1.016→0.984ms`, `2.376→2.293ms`, `1.086→1.068ms`).
-- Iteration 10 post-H44 sanity profile added `scripts/profile-optimized-phases.ts`: current speed ~0.98ms knots / 2.29ms circuit / 1.05ms rooms; propagation still dominates circuit (~82%, 772 drains) and rooms (~73%, 519 drains). Continue with H45 as a script-local prototype only: conservative deterministic multi-observe batching, full VALID+DET + success + speed gates before any promotion.
+- Iteration 10 post-H44 sanity profile added `scripts/profile-optimized-phases.ts`: current speed ~0.98ms knots / 2.29ms circuit / 1.05ms rooms; propagation still dominates circuit (~82%, 772 drains) and rooms (~73%, 519 drains).
+- Iteration 11 H45 speculative multi-observe batching was REJECTED: naive batch-2 exhausted restarts on all targets; spatially-separated batch-2/4 either slowed knots badly (`0.313x` for b2sep) or still exhausted circuit/rooms. Stale unpropagated choices are not a viable speed lever.
+- Round 4 CPU ratchet is STOPPED: H43/H44 kept, H37/H38/H40/H42/H45 rejected/reverted, final ideation found no plausible high-payoff CPU path. Next phase: Phase 4c OSS polish (README, visualizer, learning guide, external benchmark refresh, packaging).
 
 The GPU ratchet loop is also STOPPED. The no-spin WebGPU paths tested after compact did not produce a viable crossover.
 

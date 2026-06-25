@@ -2020,3 +2020,60 @@ rooms-30: observes=519 propagates=519 wall=1.091ms; next 5.7%, observe 4.9%, pro
 ```
 
 Decision: CONTINUE to a script-local H45 prototype. Propagation still dominates circuit/rooms after H43/H44, and there are hundreds of observe→propagate drains (`772` circuit, `519` rooms). A batch that safely reduces the number of drains could have meaningful upside. But H45 must stay script-local first because it changes search behavior, can increase contradictions/restarts, and may reduce success or full-run speed. The prototype should start conservative: deterministic batch size 2 (maybe 4 only if 2 is promising), select spatially separated MRV cells from the current bucket state if possible, observe them with the existing weighted pick sequence, then propagate once; gate with VALID+DET, success rate on hard inputs, and speed.
+
+## Hypothesis H45 — speculative multi-observe batches with restart safety [REJECTED]
+
+Hypothesis: reduce the number of expensive propagation drains by observing multiple cells before each `propagate()`. Since this changes search behavior, keep it script-local and gate with validity, determinism, speed, and success sanity before any promotion.
+
+Change: added `scripts/cpu-batched-observe-proto.ts` only. The shippable solver is untouched. The prototype:
+- drives the optimized model's private runtime methods (`nextUnobservedNode`, `observe`, `propagate`) in a custom run loop;
+- tests naive batch-2, spatially-separated batch-2, and spatially-separated batch-4;
+- uses deterministic restart seeds matching the optimized solver;
+- validates final tilings with the independent `validateTiling()` gate;
+- checks deterministic repeatability and a hard-input success sanity on `knots-dense-24`.
+
+Verification:
+
+```text
+bun run typecheck
+PASS
+
+bun run scripts/cpu-batched-observe-proto.ts
+case                 | mode   | ms     | speed | ok | complete | valid | det | attempts | observes | props | contradictions
+knots-standard-48    | current|  1.049 | 1.000 | ok |     true |  true | true|        1 |        ? |     ? |              ?
+knots-standard-48    | b2     | 69.789 | 0.015 | no |    false |  true | true|      101 |     5072 |  2536 |            101
+knots-standard-48    | b2sep  |  3.357 | 0.313 | ok |     true |  true | true|        1 |     2202 |  1102 |              0
+knots-standard-48    | b4sep  |  7.455 | 0.141 | ok |     true |  true | true|        2 |     3931 |   984 |              1
+circuit-turnless-34  | current|  2.449 | 1.000 | ok |     true |  true | true|        1 |        ? |     ? |              ?
+circuit-turnless-34  | b2     | 212.770| 0.012 | no |    false |  true | true|      101 |      378 |   189 |            101
+circuit-turnless-34  | b2sep  | 212.776| 0.012 | no |    false |  true | true|      101 |     1064 |   532 |            101
+circuit-turnless-34  | b4sep  | 212.224| 0.012 | no |    false |  true | true|      101 |      528 |   132 |            101
+rooms-30             | current|  0.971 | 1.000 | ok |     true |  true | true|        1 |        ? |     ? |              ?
+rooms-30             | b2     | 79.886 | 0.012 | no |    false |  true | true|      101 |      610 |   305 |            101
+rooms-30             | b2sep  | 84.869 | 0.011 | no |    false |  true | true|      101 |     5354 |  2677 |            101
+rooms-30             | b4sep  | 79.607 | 0.012 | no |    false |  true | true|      101 |      752 |   188 |            101
+
+success sanity on knots-dense-24 (N=30):
+current: ok+complete 30/30
+b2:      ok+complete  0/30 valid+complete  0/30 det=true
+b2sep:   ok+complete 30/30 valid+complete 30/30 det=true
+b4sep:   ok+complete 30/30 valid+complete 30/30 det=true
+```
+
+Decision: REJECT. Naive batching immediately turns every target case into restart-budget exhaustion. Spatial separation rescues validity and success only on knots, but it is still much slower (`0.313x` for batch-2 separated) because the extra MRV scan/blocked bookkeeping overwhelms the saved drains. On circuit and rooms, even separated batching exhausts all 101 attempts and is ~80-200ms vs ~1-2.5ms current. The core issue is semantic, not implementation polish: choosing cells against a stale, unpropagated wave creates contradictions faster than saved propagation drains can repay.
+
+Learning: reducing propagation count by delaying propagation is the wrong lever for this solver. AC-4 propagation is not just cleanup work; it is the information that makes the next MRV choice safe. Further CPU wins should be semantics-preserving micro-layout work or a genuinely different proven algorithm, not speculative stale-choice batching.
+
+## Round 4 CPU ratchet stop check [STOP]
+
+After H37/H38/H40/H45 algorithm-shape candidates and H43/H44 micro-layout candidates, the remaining measured high-payoff CPU paths are exhausted:
+
+- H37 dirty-cell bitset propagation: correct but slower.
+- H38 cell-batched AC-4: correct but slower.
+- H39 generated propagation kernel: promising micro signal but requires `new Function`; rejected as unshippable under package/CSP constraints.
+- H40/H42 FIFO ordering: drain-only signal, full-run regression; reverted.
+- H43 precomputed compatible offsets: kept.
+- H44 precomputed neighbor compatible bases: kept.
+- H45 speculative multi-observe batching: rejected; stale choices cause contradictions or overhead-heavy slowdowns.
+
+A final ideation pass against the current profile did not produce a plausible new CPU candidate with enough payoff to justify another ratchet loop. Propagation still dominates circuit/rooms, but the tested alternatives show that changing propagation granularity/order/search behavior loses, while the safe address-arithmetic precomputes have already been harvested. Stop Round 4 here and move to Phase 4c OSS polish: README, visualizer, learning guide, external benchmark refresh, packaging.
