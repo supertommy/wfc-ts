@@ -1,4 +1,4 @@
-# HANDOFF — wfc-ts ratchet optimization
+# HANDOFF — wfc-ts optimization + GPU investigation
 
 **Read this first if resuming in a fresh/compacted session.** Everything needed
 to continue is in files + git; this orients you. Project root:
@@ -12,7 +12,7 @@ loop where each optimization iteration is a subagent, gated by a proof harness
 the model cannot talk its way around. Two goals: a real optimized solver + a
 reproducible case study (like macton/differentiable-collisions-optc).
 
-## Where we are (Phases 0–4a DONE)
+## Where we are (Phases 0–4a DONE; Round 3 optimization concluded)
 
 - **Phase 0–1**: scaffold + faithful TS port of mxgmn's SimpleTiledModel as
   `src/` (the correctness anchor + speedup baseline). Verified valid + deterministic.
@@ -20,53 +20,102 @@ reproducible case study (like macton/differentiable-collisions-optc).
   **VALID + DET** (valid+complete tiling; deterministic run-twice). `compare.ts`
   (byte-match to reference) is **informational, not a gate**. Proven vs identity
   copy in `HARNESS-BASELINE.md`.
-- **Phase 3**: ratchet loop ran 3 hypotheses (all KEPT, see `OPTIMIZATION-LOG.md`):
-  - H1 flatten wave/compatible → typed arrays (SoA)
-  - H2 flatten propagator → flat CSR typed arrays
-  - H4 heap-based entropy selection (O(log n); Tier-2, changes collapse sequence,
-    gated valid+det — `compare*` reads FAIL and that's expected)
-  - (H3 skipped as throwaway — H4's heap replaces the scan.)
-- **Phase 4a**: external head-to-head in `benchmarks/external/RESULTS.md`. **We
-  are the fastest on every input where comparison is possible**, including
-  three-wfc (the 2025 optimized TS solver using the SAME heap technique): 1.20–
-  5.59× faster apples-to-apples (both non-periodic, Knots). vs kchapelier
-  2.28–9.96×; vs blazinwfc 1.94–11.89× (Dense: blazin times out, we 0.32ms).
-  Circuit/Rooms only comparable via kchapelier (three-wfc/blazin/lite can't
-  express those mxgmn tilesets — honest N/A, format limits).
+- **Phase 3 / Round 1**: H1/H2/H4 kept: typed-array SoA wave/compatible, flat CSR
+  propagator, and heap entropy selection.
+- **Round 2**: propagation-push attempts mostly reverted/rejected; H6 batched heap
+  updates kept. Conclusion: CPU AC-4 decrement loop already near-optimal.
+- **Round 3**: ideation-driven multi-axis loop concluded at genuine exhaustion.
+  Kept H10/H12/H16/H22/H23/H26/H27/H28/H29/H30/H31: clear-fixpoint cache,
+  deterministic restart, steppable run loop, MRV + bucket PQ, byte-narrowing of
+  hot arrays, dropped dead entropy state, and precomputed neighbor table.
+- **Phase 4a**: external head-to-head in `benchmarks/external/RESULTS.md`. We beat
+  every comparable JS/TS implementation tested (three-wfc, kchapelier, blazinwfc;
+  some tilesets N/A because competitor formats cannot express them).
 
-## Current measured state (this machine, macOS arm64 Bun 1.3, median-of-5)
+## Current measured state (this machine, macOS arm64 Bun 1.3)
 
-Optimized vs reference: knots-standard-48 **6.3×** (1.68ms), circuit-turnless-34
-**1.66×** (4.39ms), rooms-30 **1.71×** (1.80ms). All VALID+DET.
+Final optimized vs reference (VALID+DET): knots-standard-48 **11.5×** (0.86ms),
+circuit-turnless-34 **2.77×** (2.38ms), rooms-30 **3.22×** (0.88ms). Success rate
+is **100%** on committed + harder/larger inputs via H12 deterministic restarts.
+Memory: circuit 1244KB → **659KB (-47%)**. Steppable/cancelable run loop exists
+for web visualizer use.
 
-## NEXT: Phase 4c — open-source finish (Round 3 ratchet CONCLUDED at genuine exhaustion)
+## GPU investigation status (latest thread)
 
-Round 3 (~20 iterations, 11 KEPT: H10/H12/H16/H22/H23/H26/H27/H28/H29/H30/H31) is DONE. Final
-optimized vs reference (VALID+DET): knots-48 11.5x, circuit 2.77x, rooms 3.22x (MET 3x); success 100%
-on committed + harder/larger inputs; memory circuit 1244KB→659KB (-47%); steppable/cancelable run
-loop (H16, a web differentiator). The AC-4 propagation inner decrement loop is the irreducible
-plain-JS wall (alg reverts H5/H15; ideation-4 confirmed no >5-10% candidate remains). See
-OPTIMIZATION-LOG.md Round 3 conclusion + src-optimized/README.md.
+The pure-JS ratchet is complete, but the user challenged whether WebGPU could help by **limiting
+CPU/GPU boundary crossings**. We tested that in stages:
 
-The optimization is complete across all three axes (speed/success/memory) + web fit. What remains
-is the open-source case-study finish:
+1. `scripts/webgpu-prototype.ts`: naive parallel AC-4 propagation was correct but slower due to
+   per-iteration readbacks.
+2. `scripts/webgpu-prototype-v2.ts`: fused worklist propagation + one final readback crossed over
+   for a **single large circuit propagation** (GPU ~2.5× at 128, ~3.1× at 256).
+3. `src-optimized/webgpu/propagate-gpu.ts` + `gpu-runner.ts` + `scripts/bench-gpu-fullrun.ts`:
+   hybrid CPU-observe/GPU-propagate was correct but full-run GPU lost **200–3000×** because it
+   still crossed the boundary per observe (`mapAsync` count/log readbacks × ~N observes).
+4. `scripts/webgpu-boundary-probe.ts` (commit `c9374de`): proved on Apple M3 Max/Dawn that many
+   queued dispatches with one final readback are feasible (~67ms for 50k dispatches) and a simple
+   cross-workgroup atomic barrier completed for 1–64 workgroups.
+5. Throwaway full-GPU/chunked prototype (script deleted, log committed `94bd52a`): GPU owned MRV
+   select + observe + propagation state and collapsed crossings to start/end. **Single observe +
+   prop matched CPU exactly**, but multi-observe chaining produced deterministic, complete-looking
+   but **invalid** tilings (e.g. circuit-16 had 22 illegal adjacency pairs; knots-16 had 456).
+
+Current interpretation: the boundary-crossing idea is valid; the next blocker is **GPU algorithm /
+frontier lifecycle correctness**, not raw overhead. Likely root areas: dropped worklist items,
+ping-pong parity/clearing, not proving both frontier counts empty before next observe, observe bans
+not all enqueued, or stale `sumsOfOnes` selection.
+
+A KB investigation was added and committed in `tommyato-knowledge`:
+`investigations/gpu-frontier-data-structures-for-wfc.md` (commit `4a7e7c0`). Key framing:
+WFC propagation should be modeled as a GPU graph **frontier** problem (`advance` / `filter` /
+`compute`) rather than a CPU stack. Relevant sources: NVIDIA Merrill/Garland BFS, Gunrock frontiers,
+GPU Gems scan/stream-compaction, CUB `DeviceScan`/`DeviceSelect` style primitives.
+
+## NEXT after compact
+
+User intent: **continue fixing the GPU algorithm** by applying GPU-native frontier/worklist research.
+Do not jump back to Phase 4c polish yet unless the user changes direction.
+
+Recommended next technical step:
+1. Recreate or build a **small, committed debug prototype** (not shipped API) focused on correctness,
+   not speed.
+2. Disable randomness: MRV cell + lowest live tile.
+3. Run tiny grids (`circuit` 8/16, maybe `knots` 8/16) in **CPU/GPU lockstep**.
+4. After each observe+propagate, read GPU `wave`, `compatible`, `sumsOfOnes`, and both frontier
+   counts; compare to CPU after the same step.
+5. Stop at the first divergence and classify: missing enqueue, dropped frontier, wrong ping-pong
+   parity, insufficient drain, or stale selection.
+6. If atomic append worklist stays fragile, redesign propagation as Gunrock-style:
+   `frontier -> advance candidates -> filter/support-hit-zero -> scan/compact -> nextFrontier`.
+
+The pure-JS solver remains the shippable path. Treat GPU as a research branch until it passes
+VALID+DET on small grids and then crosses over on large heavy grids.
+
+## Open-source finish (after GPU research pauses/concludes)
+
+Once the GPU investigation is paused or resolved, remaining Phase 4c work:
 1. **Generalization check** (alternate seeds / larger grids — mandatory before any final claim).
 2. **Web visualizer** (`viz/`) — uses the H16 steppable run loop to animate the collapse.
 3. **Learning guide** (`docs/`) + the four `prompts/` instruction docs — the case-study artifact.
 4. Final README + open-source packaging (API docs, types, examples, benchmarks/external/RESULTS.md
    refresh with the post-Round-3 numbers).
 
-The ratchet loop is STOPPED. To resume optimization later, re-engage loop_control with the
-Round 3 prompt (a fresh ideation pass would be needed — current candidates are exhausted).
+The ratchet loop is STOPPED. To resume CPU optimization later, re-engage loop_control with a fresh
+ideation pass; current pure-JS candidates are exhausted.
 
 ## Key files (read order for a fresh session)
 
 1. This file.
-2. `src-optimized/README.md` — candidate list, target, baseline, exit criteria (the living state).
-3. `OPTIMIZATION-LOG.md` — per-hypothesis measured history.
-4. `prompts/optimize-one.md` — the per-iteration methodology (match contract, gate/measure/keep-revert/commit/log, hard rules).
-5. `HARNESS-BASELINE.md` — the gate contract (valid+det; compare informational).
-6. `benchmarks/external/RESULTS.md` — the external comparison (we win).
+2. `OPTIMIZATION-LOG.md` — per-hypothesis measured history + WebGPU prototype results.
+3. `src-optimized/README.md` — optimization candidate list and Round 3 conclusion.
+4. `src-optimized/webgpu/propagate-gpu.ts` — correct single-propagation GPU backend + incremental hybrid path.
+5. `src-optimized/webgpu/gpu-runner.ts` — Stage 2 hybrid full-run runner (correct but too slow).
+6. `scripts/webgpu-boundary-probe.ts` — latest boundary-crossing feasibility probe.
+7. `scripts/webgpu-prototype-v2.ts` — single-propagation large-grid crossover prototype.
+8. KB: `/Users/tommy/Documents/projects/superhq/tommyato-knowledge/investigations/gpu-frontier-data-structures-for-wfc.md`.
+9. `prompts/optimize-one.md` — CPU ratchet methodology if needed.
+10. `HARNESS-BASELINE.md` — the gate contract (valid+det; compare informational).
+11. `benchmarks/external/RESULTS.md` — external comparison (needs post-Round-3 refresh before release).
 
 ## Match contract (the gate)
 
@@ -86,11 +135,11 @@ in the log with measurements.
 
 ## Gotchas
 
-- **No background jobs/monitors are running** (verified). The earlier 2h "hang"
-  was a real bug (blazin's backtracking loops on Dense; fixed with a per-solver
-  child-process kill timeout in `benchmarks/external/bench-child.ts`).
-- **Memory tool has a persistent write-lock from another navi session** —
-  couldn't capture cross-session notes there; everything is in files + git instead.
+- **No background jobs/monitors are running** unless a fresh session starts one.
+- Stage 2 GPU hybrid is correct but unusably slow; do not optimize around per-observe `mapAsync`.
+  The only promising GPU direction is GPU-native frontier correctness with crossings collapsed.
+- The throwaway full-GPU/chunked prototype script was deleted before commit; details are in
+  `OPTIMIZATION-LOG.md` commit `94bd52a` and the compacted conversation summary.
 - `git config user.name/email` is set locally (tommyato) so subagent commits work.
 - Reference repos cloned in `../references/` (WaveFunctionCollapse, fast-wfc,
   three-wfc, kchapelier-wfc, blazinwfc, lite-wfc) — read-only, not committed.
