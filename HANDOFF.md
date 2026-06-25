@@ -149,7 +149,8 @@ Round 4 progress:
 - Iteration 5 H40 propagation ordering prototype was correct and showed a consistent FIFO drain-only win (~1.1-1.17x on circuit/rooms).
 - Iteration 6 H42 minimal FIFO propagation passed gates but regressed full-run speed, so the model change was reverted.
 - Iteration 7 STALL→IDEATE (TRIZ) found new candidates.
-- Iteration 8 H43 precomputed `propCompatOffset[start+l]=t2*4+d` was KEPT: gates pass, circuit improved in A/B (~4-10%), knots flat/slightly better, rooms noise-flat, tiny memory cost. Next candidate: H44 precomputed neighbor compatible bases (`neighbor*T4`) to remove outer-loop base multiply; lower payoff but composes with H43.
+- Iteration 8 H43 precomputed `propCompatOffset[start+l]=t2*4+d` was KEPT: gates pass, circuit improved in A/B (~4-10%), knots flat/slightly better, rooms noise-flat, tiny memory cost.
+- Iteration 9 H44 precomputed `neighborCompatBase[i*4+d]=neighbor*T4|-1` was KEPT: gates pass, higher-rep A/B improved knots/circuit/rooms (`1.016→0.984ms`, `2.376→2.293ms`, `1.086→1.068ms`). Next candidate is H45 speculative multi-observe batching, but first confirm with a quick fresh profile/speed sanity check because it is high-risk/search-changing.
 
 The GPU ratchet loop is also STOPPED. The no-spin WebGPU paths tested after compact did not produce a viable crossover.
 

@@ -181,6 +181,10 @@ export abstract class Model {
   // in propagate's outer loop (the 85%+ wall on circuit/rooms). Int32 -1 sentinel for simplicity
   // and generality (correct even if count>=65536). Tier-1; mem growth accepted.
   protected neighbors: Int32Array = new Int32Array(0);
+  // H44: same indexing as neighbors, but stores neighbors[i*4+d] * T4 or -1.
+  // Lets propagation get compatible base directly in the common path; the cell
+  // id is read from neighbors only on the uncommon zero-support ban branch.
+  protected neighborCompatBase: Int32Array = new Int32Array(0);
 
   // H27: auto-narrowed (stackT by T<256→Uint8; stackI+dirty by count<65536→Uint16).
   // Pushed on ban, popped in propagate inner (cache win marginal; memory main). Tier-1.
@@ -330,6 +334,7 @@ export abstract class Model {
     // Replicates the *exact* current i2 computation used in propagate (incl. the N-based
     // out-of-bounds test for !periodic before wrapping). Sentinel -1 for invalid dirs.
     this.neighbors = new Int32Array(count * 4);
+    this.neighborCompatBase = new Int32Array(count * 4);
     {
       const { MX, MY, N, periodic } = this;
       for (let i = 0; i < count; i++) {
@@ -348,7 +353,9 @@ export abstract class Model {
             else if (y2 >= MY) y2 -= MY;
             nei = x2 + y2 * MX;
           }
-          this.neighbors[i * 4 + d] = nei;
+          const nidx = i * 4 + d;
+          this.neighbors[nidx] = nei;
+          this.neighborCompatBase[nidx] = nei < 0 ? -1 : nei * T4;
         }
       }
     }
@@ -617,25 +624,25 @@ export abstract class Model {
   }
 
   private propagate(): boolean {
-    const { propData, propCompatOffset, propStart, propLen, compatible, stackI, stackT, neighbors, T4, T } = this;
+    const { propData, propCompatOffset, propStart, propLen, compatible, stackI, stackT, neighbors, neighborCompatBase, T } = this;
     while (this.stacksize > 0) {
       this.stacksize--;
       const i1 = stackI[this.stacksize];
       const t1 = stackT[this.stacksize];
 
       for (let d = 0; d < 4; d++) {
-        const i2 = neighbors[i1 * 4 + d];
-        if (i2 < 0) continue;
+        const nidx = i1 * 4 + d;
+        const base2 = neighborCompatBase[nidx];
+        if (base2 < 0) continue;
 
         const key = d * T + t1;
         const start = propStart[key];
         const len = propLen[key];
-        const base2 = i2 * T4;
 
         for (let l = 0; l < len; l++) {
           const p = start + l;
           if (--compatible[base2 + propCompatOffset[p]] === 0) {
-            this.ban(i2, propData[p]);
+            this.ban(neighbors[nidx], propData[p]);
           }
         }
       }
@@ -879,6 +886,7 @@ export abstract class Model {
     bytes += this.sumsOfOnes.byteLength;
     bytes += this.observed.byteLength;
     bytes += this.neighbors.byteLength; // H31
+    bytes += this.neighborCompatBase.byteLength; // H44
     // H10: include snapshot copy (wave/compat/sums/ent/obs) so memory measurement reflects real delta
     bytes += this.wave0.byteLength;
     bytes += this.compatible0.byteLength;

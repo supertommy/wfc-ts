@@ -1957,3 +1957,41 @@ rooms-30:            ref  3.284ms | opt 1.117ms | speedup  2.94x
 Decision: KEEP. H43 is byte-id/semantics-preserving, passes the gate, and shows a repeatable circuit win (~4-10% depending run) while knots is flat-to-slightly-better and rooms is noise-flat. The extra memory is one narrow `propCompatOffset` entry per `propData` entry (tiny; current propData is already <2KB on committed tilesets), acceptable under SPEED > memory.
 
 Learning: TRIZ Preliminary Action paid off where queue/algorithm rewrites did not: move arithmetic out of the common-case decrement wall without changing the solver shape. Next candidate: H44 precomputed neighbor compatible bases (`neighbor*T4`) to remove one outer-loop multiply per popped ban/direction. It is lower payoff but composes cleanly with H43.
+
+## Hypothesis H44 — precomputed neighbor compatible bases [KEPT]
+
+Hypothesis: after H43 removed inner-loop compatible offset arithmetic, remove the remaining outer-loop compatible-base multiply. Store `neighborCompatBase[i*4+d] = neighbors[i*4+d] * T4` (or `-1`) during `init()`. In propagation, read `base2` directly from this table in the common path and read `neighbors[nidx]` only on the uncommon zero-support branch for `ban()`.
+
+Change:
+- Added `Model.neighborCompatBase: Int32Array`, built beside `neighbors` in `init()`.
+- Changed `propagate()` from `const i2 = neighbors[...]`; `const base2 = i2*T4` to `const base2 = neighborCompatBase[nidx]` and `this.ban(neighbors[nidx], propData[p])` only when needed.
+- Included `neighborCompatBase.byteLength` in `footprintBytes()`.
+- AC-4 semantics, propagation order, and public API unchanged.
+
+Gates:
+
+```text
+bun run typecheck
+PASS
+
+bun run harness/prove-harness.ts
+FINAL: PASS — harness proven against identity copy (gate: valid + deterministic)
+```
+
+Measurement (apples-to-apples higher-rep A/B; H44 then temporary checkout back to H43 baseline, then H44 reapplied):
+
+```text
+H44, median-of-11:
+knots-standard-48:   ref 10.776ms | opt 0.984ms | speedup 10.95x
+circuit-turnless-34: ref  7.245ms | opt 2.293ms | speedup  3.16x
+rooms-30:            ref  3.287ms | opt 1.068ms | speedup  3.08x
+
+H43 baseline, median-of-11:
+knots-standard-48:   ref 10.968ms | opt 1.016ms | speedup 10.79x
+circuit-turnless-34: ref  7.202ms | opt 2.376ms | speedup  3.03x
+rooms-30:            ref  3.253ms | opt 1.086ms | speedup  3.00x
+```
+
+Decision: KEEP. H44 is byte-id/semantics-preserving, gates pass, and A/B shows a small but consistent win on all three target inputs: knots ~3%, circuit ~3.5%, rooms ~1.7%. Memory cost is `count*4*4` bytes, same scale as `neighbors`; acceptable because SPEED > memory and it composes with H43's common-path arithmetic removal.
+
+Learning: the second TRIZ Preliminary Action also paid off. Precomputing more of the address calculation works better than changing propagation order/unit. Next candidate is H45 speculative multi-observe batching, but it is high risk and changes search behavior; before implementing, run a quick fresh speed/profile sanity check to see whether observe/propagate cycle overhead is still high enough to justify it.
