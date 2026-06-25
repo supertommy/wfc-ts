@@ -4,12 +4,12 @@ Status: **IN PROGRESS**
 
 ## Items
 
-- [ ] **Generalization check** — verify alt seeds, larger grids (64x64, 128x128) pass VALID+DET
+- [x] **Generalization check** — verify alt seeds, larger grids (64x64, 128x128) pass VALID+DET ✓ 27/27 pass
 - [ ] **Web visualizer** — `viz/` directory, uses H16 stepRun generator, simple HTML+JS demo
 - [ ] **Learning guide** — `docs/` with WFC concepts, architecture walkthrough, optimization history
 - [ ] **Prompts docs** — complete/polish the 4 docs in `prompts/`
 - [ ] **README polish** — final README.md with badges, install, usage, benchmarks, API
-- [ ] **External benchmark refresh** — rerun `benchmarks/external/run.ts` with final solver, update RESULTS.md
+- [x] **External benchmark refresh** — rerun with final solver, update RESULTS.md ✓ 2.55–19.57x faster than all competitors
 - [ ] **OSS packaging** — package.json metadata, LICENSE check, .npmignore, publish prep
 
 ## Order
