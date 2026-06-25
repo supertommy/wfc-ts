@@ -1995,3 +1995,28 @@ rooms-30:            ref  3.253ms | opt 1.086ms | speedup  3.00x
 Decision: KEEP. H44 is byte-id/semantics-preserving, gates pass, and A/B shows a small but consistent win on all three target inputs: knots ~3%, circuit ~3.5%, rooms ~1.7%. Memory cost is `count*4*4` bytes, same scale as `neighbors`; acceptable because SPEED > memory and it composes with H43's common-path arithmetic removal.
 
 Learning: the second TRIZ Preliminary Action also paid off. Precomputing more of the address calculation works better than changing propagation order/unit. Next candidate is H45 speculative multi-observe batching, but it is high risk and changes search behavior; before implementing, run a quick fresh speed/profile sanity check to see whether observe/propagate cycle overhead is still high enough to justify it.
+
+## Round 4 sanity check — post-H44 phase profile before H45 [CONTINUE]
+
+Purpose: H45 (speculative multi-observe batching) changes search behavior, so before prototyping it we need evidence that reducing observe→propagate cycles still targets enough runtime after H43/H44. Added script-local `scripts/profile-optimized-phases.ts`, which drives the optimized model through the same runtime methods and times `clear`, `nextUnobservedNode`, `observe`, `propagate`, and finalization. It does not edit the solver; timings include per-step `performance.now()` overhead and are for phase-share triage, not benchmark claims.
+
+Verification / speed sanity:
+
+```text
+bun run typecheck
+PASS
+
+bun run harness/measure-speedup.ts knots-standard-48 11
+SPEEDUP knots-standard-48 (median-of-11): ref 10.579ms | opt 0.977ms | speedup 10.82x
+bun run harness/measure-speedup.ts circuit-turnless-34 11
+SPEEDUP circuit-turnless-34 (median-of-11): ref 7.100ms | opt 2.288ms | speedup 3.10x
+bun run harness/measure-speedup.ts rooms-30 11
+SPEEDUP rooms-30 (median-of-11): ref 3.305ms | opt 1.054ms | speedup 3.14x
+
+bun run scripts/profile-optimized-phases.ts
+knots-standard-48: observes=2250 propagates=2250 wall=1.525ms; next 13.8%, observe 13.5%, propagate 45.0%, cycle 72.4%
+circuit-turnless-34: observes=772 propagates=772 wall=2.719ms; next 4.2%, observe 3.8%, propagate 81.8%, cycle 89.8%
+rooms-30: observes=519 propagates=519 wall=1.091ms; next 5.7%, observe 4.9%, propagate 73.3%, cycle 83.9%
+```
+
+Decision: CONTINUE to a script-local H45 prototype. Propagation still dominates circuit/rooms after H43/H44, and there are hundreds of observe→propagate drains (`772` circuit, `519` rooms). A batch that safely reduces the number of drains could have meaningful upside. But H45 must stay script-local first because it changes search behavior, can increase contradictions/restarts, and may reduce success or full-run speed. The prototype should start conservative: deterministic batch size 2 (maybe 4 only if 2 is promising), select spatially separated MRV cells from the current bucket state if possible, observe them with the existing weighted pick sequence, then propagate once; gate with VALID+DET, success rate on hard inputs, and speed.
