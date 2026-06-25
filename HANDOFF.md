@@ -109,6 +109,7 @@ Post-discussion continuation:
 - Added `scripts/webgpu-persistent-proto.ts` to test the most direct performance path: one persistent GPU dispatch owns MRV select, weighted observe, propagation-to-fixpoint, repeat, then one final readback.
 - Result: correct/deterministic on `circuit-turnless-8`, but slow (`15.0ms` cold / `7.7ms` repeat vs JS `2.1ms`, ~0.14x) and barrier-fragile. `circuit-16` and `knots-8` exceeded the safety timeout during probing.
 - Important learning: a persistent spin-barrier can prove device-side convergence, but it is not the performant WebGPU path as implemented. Avoid spin-barrier mega-kernels for the shippable solver. If GPU research continues, pivot to no-spin designs: indirect/chunked command sequences with bounded sync, or scan/compact/fixed-epoch frontier formulations.
+- User wants the next GPU work to continue as a **ratchet loop**, not a one-off hand-coded branch. Use the Mike Acton loop shape again: one hypothesis per iteration, script-local prototype first, real measurement, keep/revert, log every result, commit kept/research checkpoints. Do not touch the shippable JS solver or public exports until a GPU path proves VALID+DET and a real crossover.
 
 ## Open-source finish (after GPU research pauses/concludes)
 
@@ -119,8 +120,24 @@ Once the GPU investigation is paused or resolved, remaining Phase 4c work:
 4. Final README + open-source packaging (API docs, types, examples, benchmarks/external/RESULTS.md
    refresh with the post-Round-3 numbers).
 
-The ratchet loop is STOPPED. To resume CPU optimization later, re-engage loop_control with a fresh
-ideation pass; current pure-JS candidates are exhausted.
+The CPU ratchet loop is STOPPED. Current pure-JS candidates are exhausted.
+
+To continue GPU research after compact, start a new ratchet loop (`loop_control start`, max 100, after-turn) with an objective like:
+
+> Continue the WebGPU WFC performance ratchet. Each iteration chooses exactly one GPU convergence/frontier hypothesis, implements it only as a script-local prototype or isolated optional WebGPU file, measures correctness and speed against optimized JS, logs the result in OPTIMIZATION-LOG.md, updates HANDOFF.md if it changes the strategic picture, commits useful checkpoints, then proposes the next hypothesis. Preserve the shippable JS solver. Stop when no plausible no-spin GPU path remains or a VALID+DET GPU path crosses over on large heavy grids.
+
+Suggested first GPU ratchet hypotheses:
+1. **Chunked fixed-epoch no-spin propagation**: after each observe, enqueue K propagation dispatches without readback, then a batched count readback/check. Ratchet K (e.g. 4/8/16/32) and measure correctness/perf. This trades exact per-layer sync for fewer host crossings without spin barriers.
+2. **Indirect/compacted frontier batch**: build next frontier via scan/compact or atomic append, use `dispatchWorkgroupsIndirect` where possible, and read back only at chunk boundaries. Goal: keep GPU occupancy and avoid persistent spin barriers.
+3. **Bulk relaxation/fixed-point epochs**: abandon AC-4 stack shape for GPU path; every epoch recomputes unsupported live tiles in parallel and bans them. Use fixed epochs per observe or per chunk; validate whether overwork is cheaper than synchronization on large grids.
+4. **Large-grid-only crossover harness**: before deeper engineering, write a gate that compares JS vs GPU candidates on circuit 128/256/512 with timeout, VALID+DET, and exact boundary-crossing counts. Do not optimize blind.
+5. **No-spin full-GPU observe chunks**: GPU performs N observes with conservative over-drain between them, then host validates/drains/restarts chunk. Useful only if correctness can be maintained without per-observe mapAsync.
+
+Hard stop criteria for the GPU ratchet:
+- Any candidate that requires non-portable spin barriers for correctness is research-only and should not be promoted.
+- Any candidate slower than JS on circuit-128/256 after removing obvious debug overhead is rejected unless it teaches a new path.
+- Any candidate that is not VALID+DET is rejected or kept only as a negative logged prototype.
+- Do not weaken the JS solver, proof harness, or public package for GPU work.
 
 ## Key files (read order for a fresh session)
 
