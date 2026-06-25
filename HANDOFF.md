@@ -38,9 +38,19 @@ In `observe()`, instead of pure weighted random:
 This is deterministic (same seed = same result) and actually faster
 (fewer restarts = less wasted work).
 
-### Remaining Hypotheses (if needed)
+### H49: Tabu-based backtracking — REVERTED ❌
 
-H46 was so effective that further hypotheses may not be needed:
+Tried a tabu-based approach: track (cell, tile) choices that led to
+contradiction, penalize them on restart. **Result: 74% → 49%** (worse!).
+
+Why it failed: A (cell, tile) choice being "bad" depends on PRIOR choices,
+not just on the pair itself. The same tile at the same cell can be good in
+one collapse order and bad in another. Global tabu doesn't capture this.
+
+True checkpoint-based backtracking would work but adds significant complexity
+and memory overhead. The 72-74% success rate from LCV alone is acceptable.
+
+### Remaining Hypotheses (if pursuing >80%)
 
 ### Files to Create
 
