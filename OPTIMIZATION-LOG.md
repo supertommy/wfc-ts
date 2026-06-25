@@ -334,3 +334,29 @@ candidate. Propagation is an algorithmic wall, not a micro-architectural one.
 **Cost:** subprof 3 inputs x5 + 2x full measure5x3 + 2x success x100 + 2x mem + 4x prove + typechecks + edits + log/readme/commit ~10min wall + harness runs.
 
 Round 3 begins (first candidate H10 per attack order). Next: H15.
+
+## Hypothesis 15 — watched-literal propagation (full AC-4 replacement) [REVERTED]
+
+**Hypothesis:** The propagation wall (60-66% on circuit/rooms post-H10 per profiles) is the AC-4 decrement: for each ban, O(propagator fanout) work touching every listed neighbor support. Replace with watched literals: (cell,pat,d) slots watch a *single* witness; bans only wake the watchers of the exact banned (cell,pat) via a fixed-pool doubly-linked reverse map (wlHead/wlNext/wlPrev, pool index=slot id, O(1) unlink). Woken slot rescans its propagator-derived candidate list at the neighbor for a new live witness (amortized O(1)) or bans self. Same semantics via identical d/OPPOSITE mapping + propagator lists. Boundary off-grid slots use -2 sentinel (no link) to match mxgmn (never decrement, allow patterns needing "out of grid" supports). Preserves H6 batch-heap + H10 fixpoint cache (now over watched+wl structs). Removes `compatible` entirely. Tier-2 (alg change); gate VALID+DET only. Speed primary; mem growth accepted.
+
+**Change:** Exactly one file `src-optimized/model.ts`. Replaced compatible with watched/wlHead/wlNext/wlPrev (+0 snapshots); rewrote init/clear (watch seeding + sentinel offgrid + propagate-to-fixpoint), ban (unlink own 4 slots + H6 dirty), propagate (walk wl list, find new or ban); added link/unlink/getWit helpers; updated H10 restore/capture, footprint, header comments, T4 comment. Direction mapping derived from AC-4 (candidates via prop[OPPOSITE[d]][t] at witCell computed as i - d vec). No other files. No debug left.
+
+**Gate + Measure:**
+- `npx tsc --noEmit` clean.
+- `bun run harness/prove-harness.ts`: VALID+DET (viol=0) on all inputs; DET re-runs identical checksums. (compare* FAIL expected Tier-2.)
+- SPEED (primary; `harness/measure-speedup.ts` median-of-5; before via `git stash` of clean post-H10, after on H15 patch):
+
+| input               | ref ms | opt-before | opt-after | speedup-before | speedup-after |
+|---------------------|--------|------------|-----------|----------------|---------------|
+| knots-standard-48   | ~10.8-11.2 | 1.800 ms | 2.213 ms | 6.01x | 5.08x |
+| circuit-turnless-34 | ~6.9-7.2   | 4.358 ms | 5.610 ms | 1.64x | 1.23x |
+| rooms-30            | ~3.5-3.8   | 1.850 ms | 2.373 ms | 1.89x | 1.59x |
+
+- SUCCESS (knots-dense-24 N=100): 95/100 both before and after (no regression).
+- MEMORY (`harness/memory.ts`): knots-48 pre 1.148MB → H15 2.641MB (+≈1.5MB, as 3× slots + 2× heads); accepted per spec.
+
+**Decision:** REVERT (`git checkout -- src-optimized/model.ts`). VALID+DET held (first attempt, no fix needed). But no performance win — regressed on all inputs (knots -23%, circuit/rooms worse) above noise. Watched literal wake+scan+list mgmt overhead exceeded the saved per-ban work for these tilesets/fanouts (WFC propagator lists are short but management constant factors high in JS). Honest outcome: not guaranteed to win; logged with measurements. (If this had been too big, would have recommended H15a/H15b split, but it gated cleanly.)
+
+**Cost:** stash/measure before 3×5 + impl + 3×5 after + success100 + mem3 + 4×prove + typecheck + log/readme ~12min wall + runs.
+
+Round 3: H15 attempted+reverted (no win on prop wall). Next per attack order: H12 (restart seeds for success).
