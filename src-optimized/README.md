@@ -65,7 +65,7 @@ informational. See `prompts/optimize-one.md`.
 | H28 | sumsOfOnes Int32→Uint8 (live count ≤T<256) + sumsOfOnes0 cache | 1 (byte-id) | memory (tiny) + marginal speed (heap reads) | KEPT | Uint8 for all (T=9/36/28<256); knots 1.475→1.486ms (noise), circ 2.963→2.900ms (noise), rooms 1.606→1.596ms (noise); mem -13.8kB/-6.9kB/-5.4kB (sums+s0); VALID+DET byte-id; completes ideation-2 narrowing (H23/26/27/28). See log. |
 | H29 | drop dead entropy arrays (entropies/sumsOfW*/weightLogW + *0 snaps) under MRV (default) | 1 (byte-id under MRV) | memory + micro clear | TODO | ~6 Float64 count arrays dead under MRV (H22); ~55KB mem circuit + tiny less .set() work in clear; keep allocs+work for heuristic=Entropy. Tier-1 when default. See iter-15 profile+log. |
 | H30 | MRV bucket priority queue (buckets[1..T] exploiting tiny integer range) replacing f64 heap for default | 2 (valid+det) | speed (knots nextUnobs 22% secondary) | TODO | first-principles on MRV prio domain (1..T ints); extract = first non-empty bucket + min-i for det. May beat logN+f64 on small-T. Trade: new impl, O(T+b) vs log. |
-| H31 | periodic fast-path in propagate (dead branch/arith elimination for periodic=true case) | 1 (byte-id) | speed (prop wall 85%+) | TODO | first-prin + TRIZ asymmetry: knots/circuit are periodic; hoist to no-wrap inner (mod still but no edge exits). Dup or select. Attacks main loop directly. |
+| H31 | precomputed neighbor table (removes per-iter wrap/edge/mul from propagate outer loop — the 85%+ wall) | 1 (byte-id) | speed (prop wall) | KEPT | Int32Array(count*4) w/ -1 sentinel (built once in init); knots 1.481→1.343ms (no reg), circuit 3.284→2.634 (+20%), rooms 1.680→1.395 (+17%); mem +37/+18.5/+14.4 kB; VALID+DET (Tier-1 byte-id); clear untouched (~1%). See log. |
 | H33 | elide gen-wrap reset in flushHeapUpdates (gen collision impossible in practice) | 1 (byte-id micro) | speed (flush ~4-8% of now-visible next) | TODO | remove if(gen===0) fill + 32b logic from H6 flush hot path. #flushes <<2^32. Micro on ban+heap-update path. |
 
 H3 (index-ordered active-cell bitset to trim the scan) is **deliberately skipped**:
@@ -137,7 +137,7 @@ decrement loop is already flat CSR with AC-4 support counts — close to optimal
 for the simple-tiled-model propagation algorithm. A further circuit/rooms win
 would require a different propagation algorithm (out of scope for the ratchet,
 which optimizes the existing algorithm; a new algorithm is a separate project).
-Loop paused on exhaustion after H28 (narrowing complete); iter-15 re-profile + ideation-3 (TRIZ+first-principles on wall evidence + history of H5/H15 reverts + H22/H23 wins) minted 4 fresh (H29–H31/H33) — see table + OPTIMIZATION-LOG.md. Real stop only when an ideation pass itself yields *nothing* worth trying.
+Loop paused on exhaustion after H28 (narrowing complete); iter-15 re-profile + ideation-3 (TRIZ+first-principles on wall evidence + history of H5/H15 reverts + H22/H23 wins) minted 4 fresh (H29–H31/H33) — see table + OPTIMIZATION-LOG.md. H31 (neighbor table) KEPT in iter-16 (replacing the prior periodic-fastpath ideation). Real stop only when an ideation pass itself yields *nothing* worth trying.
 
 ## Round 3 — "best WFC in the world" (multi-axis, TRIZ-derived)
 
@@ -218,7 +218,7 @@ Now propagation remains the wall; H24 (subsumed) + H25 (already-clustered, no he
 
 **Post-H27 (this iteration):** H27 (stack + dirty cache-narrow) KEPT. Mirrored auto-select: stackT Uint8 (by T), stackI+dirtyHeapCells Uint16 (by count<64k). Stack+dirty family ~3× smaller bytes (was big ~33% slice). Speed within noise on paired med5 (knots 1.489→1.479ms flat/gain, circ 2.953→3.004ms ~+1.7% noise, rooms 1.587→1.645ms ~+3.6% noise); mem win 650k→505k / 1015k→724k / 631k→455k (-145k/-291k/-176kB). VALID+DET Tier-1 (stack empty at H10 snap, scalars ok). Next: H28 or re-profile + ideation-3.
 
-**Post-H28 (prior):** H28 completed ideation-2 narrowing. **Iter 15 (this):** RE-PROFILE (see log for per-phase %: prop now 56/87/85% on knots/circuit/rooms; next 22% on knots; clear <2%; heap-extract low) + ideation-3 (TRIZ+first-principles) minted H29 (dead entropy drop under MRV) + H30 (MRV buckets) + H31 (periodic prop fastpath) + H33 (flush micro). All added as TODO rows below. Current clean: knots 1.474ms (6.83×), circuit 2.985ms (2.34×), rooms 1.584ms (1.96×). Top next: H29.
+**Post-H28 (prior):** H28 completed ideation-2 narrowing. **Iter 15 (this):** RE-PROFILE (see log for per-phase %: prop now 56/87/85% on knots/circuit/rooms; next 22% on knots; clear <2%; heap-extract low) + ideation-3 (TRIZ+first-principles) minted H29 (dead entropy drop under MRV) + H30 (MRV buckets) + H31 (precomp neighbors) + H33 (flush micro). All added as TODO rows below. **Iter 16:** H31 (neighbor table) KEPT. Current (post-H31): knots ~1.34ms (7.4x), circuit ~2.63ms (2.58x), rooms ~1.40ms (2.49x). Top next: H29 or H30 or H33.
 
 ## Exit criteria (the orchestrator checks each loop turn)
 

@@ -95,6 +95,11 @@
 // H28 (this): narrow sumsOfOnes/sumsOfOnes0 (MRV counts ≤T<256→Uint8). Completes
 //   ideation-2 set (H23/26/27/28). Heap prio reads (not prop inner); tiny mem win if no-reg. Tier-1.
 //
+// H31 (this): precomputed neighbor table (Int32Array(count*4)) — speed win on propagate outer loop (85%+ wall).
+//   The outer loop (per pop, per dir) computes i2 via x2/y2 + N-OOB test + wrap + mul (~8-10 ops).
+//   Build neighbors[i*4+d] = i2 or -1 ONCE in init(); use `const i2=neighbors[i1*4+d]; if(i2<0)continue;`.
+//   Exact semantics (N-test etc); Tier-1; mem +16B/count accepted (speed>mem). Clear untouched (~1%).
+//
 // PRNG: mulberry32, same as the reference (deterministic contract).
 
 import { mulberry32, type Random } from "./prng.js";
@@ -167,6 +172,13 @@ export abstract class Model {
   // H23: auto-narrowed (Uint8/16/Int32 chosen in init by maxPropLen); --/===0 identical.
   protected compatible: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
   protected observed: Int32Array = new Int32Array(0);
+
+  // H31: precomputed neighbor table. neighbors[i*4 + d] = i2 (wrapped) or -1 (non-periodic OOB).
+  // Built once in init after MX/MY/N/periodic/count known; grid+periodic dependent so constant
+  // across runs (never part of H10 clear fixpoint snapshot). Replaces per-iter wrap arithmetic
+  // in propagate's outer loop (the 85%+ wall on circuit/rooms). Int32 -1 sentinel for simplicity
+  // and generality (correct even if count>=65536). Tier-1; mem growth accepted.
+  protected neighbors: Int32Array = new Int32Array(0);
 
   // H27: auto-narrowed (stackT by T<256→Uint8; stackI+dirty by count<65536→Uint16).
   // Pushed on ban, popped in propagate inner (cache win marginal; memory main). Tier-1.
@@ -300,6 +312,33 @@ export abstract class Model {
     // Tiny array (~count*1B); marginal read cost (heap not prop inner); free mem if no-reg.
     {
       this.SumsOfOnesCtor = T < 256 ? Uint8Array : T < 65536 ? Uint16Array : Int32Array;
+    }
+
+    // H31: build neighbor table ONCE (after count/MX/MY/N/periodic known).
+    // Replicates the *exact* current i2 computation used in propagate (incl. the N-based
+    // out-of-bounds test for !periodic before wrapping). Sentinel -1 for invalid dirs.
+    this.neighbors = new Int32Array(count * 4);
+    {
+      const { MX, MY, N, periodic } = this;
+      for (let i = 0; i < count; i++) {
+        const x1 = i % MX;
+        const y1 = (i / MX) | 0;
+        for (let d = 0; d < 4; d++) {
+          let x2 = x1 + DX[d];
+          let y2 = y1 + DY[d];
+          let nei: number;
+          if (!periodic && (x2 < 0 || y2 < 0 || x2 + N > MX || y2 + N > MY)) {
+            nei = -1;
+          } else {
+            if (x2 < 0) x2 += MX;
+            else if (x2 >= MX) x2 -= MX;
+            if (y2 < 0) y2 += MY;
+            else if (y2 >= MY) y2 -= MY;
+            nei = x2 + y2 * MX;
+          }
+          this.neighbors[i * 4 + d] = nei;
+        }
+      }
     }
 
     // wave: all 1 (everything possible). compatible: filled by clear().
@@ -537,26 +576,16 @@ export abstract class Model {
   }
 
   private propagate(): boolean {
-    const { propData, propStart, propLen, compatible, stackI, stackT, MX, MY, N, periodic, T4, T } = this;
+    const { propData, propStart, propLen, compatible, stackI, stackT, neighbors, T4, T } = this;
     while (this.stacksize > 0) {
       this.stacksize--;
       const i1 = stackI[this.stacksize];
       const t1 = stackT[this.stacksize];
 
-      const x1 = i1 % MX;
-      const y1 = (i1 / MX) | 0;
-
       for (let d = 0; d < 4; d++) {
-        let x2 = x1 + DX[d];
-        let y2 = y1 + DY[d];
-        if (!periodic && (x2 < 0 || y2 < 0 || x2 + N > MX || y2 + N > MY)) continue;
+        const i2 = neighbors[i1 * 4 + d];
+        if (i2 < 0) continue;
 
-        if (x2 < 0) x2 += MX;
-        else if (x2 >= MX) x2 -= MX;
-        if (y2 < 0) y2 += MY;
-        else if (y2 >= MY) y2 -= MY;
-
-        const i2 = x2 + y2 * MX;
         const key = d * T + t1;
         const start = propStart[key];
         const len = propLen[key];
@@ -781,6 +810,7 @@ export abstract class Model {
     bytes += this.sumsOfWeightLogWeights.byteLength;
     bytes += this.entropies.byteLength;
     bytes += this.observed.byteLength;
+    bytes += this.neighbors.byteLength; // H31
     // H10: include snapshot copy (wave/compat/sums/ent/obs) so memory measurement reflects real delta
     bytes += this.wave0.byteLength;
     bytes += this.compatible0.byteLength;

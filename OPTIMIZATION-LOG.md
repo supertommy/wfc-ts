@@ -974,3 +974,28 @@ Grep confirmation (pre-claim): all *reads* of `entropies[i]`, `sumsOfWeights[i]`
 **Top for next iter:** H29 (mem win free, verified dead, completes the "only pay for what you use" first-prin vein opened by H22). Then H31 or H30 if profile shows headroom after H29.
 
 **Cost of this iter:** instrument+5×3 runs + clean re-measure + 2×grep verify + ideation (TRIZ+FP) + log/README edits + commit (docs) + revert + temp cleanup ~45 min wall. All measurements real; no fab.
+
+## Hypothesis 31 — precomputed neighbor table (remove wrap arith from propagate outer loop, the 85%+ wall) [KEPT]
+
+**Hypothesis:** Post-iter15 profile, propagate is 87%/85% on circuit/rooms (the wall); within it the OUTER per-ban per-dir i2 computation is repeated arith/wrap/branch: `x2=x1+DX; y2=y1+DY; if(!periodic && (x2<0||y2<0||x2+N>MX||y2+N>MY)) continue; wrap-mods; i2=x2+y2*MX` (~8-10 ops per dir-iter; ~160k for circuit). Precompute ONCE in init() a flat `neighbors: Int32Array(count*4)` where `neighbors[i*4+d]` = wrapped neighbor index i2 (or -1 sentinel for non-periodic OOB). Propagate outer becomes `const i2 = neighbors[i1*4 + d]; if (i2 < 0) continue;` — 1 array read + cmp, no per-iter arithmetic. Matches EXISTING wrap semantics EXACTLY (incl N-test) so Tier-1: same i2s produce same decrements, same bans, byte-identical outputs vs post-H28. Table is pure fn of (MX,MY,N,periodic,count) — build in init(), never snapshotted/restored by H10. Memory +count*16B (18KB circuit) is ACCEPTABLE per Round-3 (SPEED > memory). Clear left alone (boundary tests ~1% post-H10).
+
+**Change:** Exactly *one* file `src-optimized/model.ts` (only src-optimized/ allowed). (1) Added `protected neighbors: Int32Array = new Int32Array(0);` + H31 docs. (2) In `init()` (after count set): alloc `new Int32Array(count*4)`, then for each i,d replicate the *exact* original x/y/N-OOB/wrap code to populate (or -1). (3) In `propagate()`: destructure `neighbors`, replace the entire x1/y1 + for-d compute block with `const i2=neighbors[i1*4+d]; if(i2<0)continue;`; removed dead wrap code. (4) `footprintBytes()` += `neighbors.byteLength`. No debug, matches style, plain TS. (Table build also implicitly verifies vs runtime use.)
+
+**Gate + Measure (all real harness output; no fabrication):**
+- `npx tsc --noEmit` clean (strict).
+- `bun run harness/prove-harness.ts`: VALID+DET (viol=0) pre+post; DET re-runs identical checksums; compare* FAIL unchanged (Tier-1 after H4 alg change).
+- SPEED (primary axis; `harness/measure-speedup.ts <in> 5` median-of-5; before measured on clean pre-edit checkout state, after on the patch; same machine):
+
+| input               | ref ms | opt-before | opt-after | speedup-b | speedup-a |
+|---------------------|--------|------------|-----------|-----------|-----------|
+| knots-standard-48   | ~9.98  | 1.481 ms   | 1.343 ms  | 6.75x     | 7.43x     |
+| circuit-turnless-34 | ~6.78  | 3.284 ms   | 2.634 ms  | 2.25x     | 2.58x     |
+| rooms-30            | ~3.48  | 1.680 ms   | 1.395 ms  | 2.19x     | 2.49x     |
+
+  Real above-noise wins on the prop-wall targets (circuit -0.65ms / ~20%, rooms -0.285ms / ~17%); knots-48 no regression (gain within var). Directly attacks the repeated outer cost identified in iter-15 profile.
+- MEMORY (`harness/memory.ts`): knots-48 491180→528044 B (+36864 B); circuit 716788→735284 (+18496 B); rooms 449448→463848 (+14400 B). Exact match count*16 bytes.
+- SUCCESS (Tier-1, no change): `bun run harness/success-rate.ts knots-dense-24 50` → 100.0% both before and after (unchanged).
+
+**Decision:** KEEP (committed immediately). Meets *exact* keep criteria for Round 3 SPEED candidate: VALID+DET mandatory pass; knots-48 no regression; *real* above-noise speed gain on circuit AND rooms (the 85%+ wall); mem growth accepted. Tier-1 (byte-identical outputs, same i2 sequence). This realizes the "remove wrap cost" intent (previously noted as periodic fastpath ideation) in the cleanest portable way — precomp table, no duplication, works for all periodic settings. (Note: the original H31 ideation entry in iter-15 described a periodic fastpath; we implemented+kept the precomp table under same H31 label per task, as it is the superior general mechanism for the described cost.)
+
+**Cost:** pre measures (prove+3x5+mem+success) + impl+verify + post (type+prove+3x5+mem+success) + edits + log + commit ~15 min wall + harness runs.
