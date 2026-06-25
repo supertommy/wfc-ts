@@ -141,6 +141,11 @@ Round 4 loop rules:
 - Log every result in `OPTIMIZATION-LOG.md`, update `src-optimized/README.md`, and commit useful checkpoints.
 - Stop only when the Round 4 candidates are exhausted and a fresh ideation pass yields no high-payoff CPU path.
 
+Round 4 progress:
+- Iteration 1 H37 dirty-cell bitset propagation was correct but slower; rejected.
+- Iteration 2 H38 cell-batched AC-4 was correct but slower; rejected.
+- Iteration 3 H39 generated propagation kernel was correct and faster on circuit/rooms single-propagation drains, but used `new Function`; do **not** ship eval. Next candidate is H41: static default-MRV specialized propagation in `src-optimized/model.ts`, preserving generic fallback and full gates.
+
 The GPU ratchet loop is also STOPPED. The no-spin WebGPU paths tested after compact did not produce a viable crossover.
 
 Only restart GPU research if a genuinely new algorithmic seam appears (not another variant of per-observe readbacks, fixed-epoch dispatch trains, dense scans, or frontier over-dispatch). If restarting anyway, use an objective like:

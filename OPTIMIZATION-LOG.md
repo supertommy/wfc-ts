@@ -1721,3 +1721,35 @@ circuit-turnless       |  128 |  8256 |    7 |    35 |     775 |     740 |   0.0
 Decision: REJECT as a promotion candidate. Correctness passed (`diffs=0`), so batching by cell can preserve AC-4 semantics. But the best fair column (`batchDrain`, in-place drain excluding reset/clone) is still slower on every target: knots `0.0021ms` vs `0.0016ms`, circuit `0.0469ms` vs `0.0387ms`, rooms `0.0140ms` vs `0.0130ms`, circuit-128 `0.0453ms` vs `0.0398ms`. The attempted saving (neighbor/base setup once per dirty cell+direction) is outweighed by pending-bit bookkeeping, queue/enqueued guards, extracting tile buffers, and less direct stack access.
 
 Learning: current LIFO `(cell,tile)` AC-4 stack is already the cheaper representation for these sparse cascades. H37 showed recomputing support over-scans; H38 shows coalescing AC-4 bans by cell adds more bookkeeping than it removes. Next Round 4 candidate: H39 generated/specialized hot propagation kernel. It should test whether the remaining cost is JS genericity/polymorphism rather than algorithmic queue shape.
+
+## Hypothesis H39 — generated/specialized hot propagation kernel [PROTOTYPE-PASSED]
+
+Hypothesis: the remaining propagation cost may include JS genericity rather than AC-4 algorithm work: `this` property access, dynamic `T/T4`, the small direction loop, and `ban()` as a method with default-MRV-dead branches. Generate a shape-specialized drain kernel that bakes `T`/`T4`, unrolls four directions, and inlines the default MRV ban side effects (`wave`, four `compatible` zeros, stack push, `sumsOfOnes--`, dirty-cell append).
+
+Change: added script-local prototype `scripts/cpu-generated-propagate-proto.ts` only. The shippable optimized solver is untouched. The prototype:
+- emits a `new Function` propagation kernel per tested model shape;
+- preserves current AC-4 support-count semantics and LIFO stack behavior;
+- includes the MRV dirty-list write so it is not just omitting ban side effects;
+- compares final wave and `sumsOfOnes` byte-for-byte/count-for-count against current optimized `propagate()`;
+- reports drain-only timing (`genDrain`, fair to a promoted in-place kernel) plus reset-inclusive timing.
+
+Verification:
+
+```text
+bun run typecheck
+PASS
+
+REPS=1000 bun run scripts/cpu-generated-propagate-proto.ts
+=== CPU H39 GENERATED PROPAGATE KERNEL PROTOTYPE ===
+median reps=1000; genDrain excludes reset like a promoted in-place kernel; genReset includes typed-array reset
+case                   | size |  cell | keep | stack | bestBan | removed | cpuProp | genDrain | genReset | dirty | wDiff | sDiff | ok
+-----------------------|------|-------|------|-------|---------|---------|---------|----------|----------|-------|-------|-------|----
+knots-standard         |   48 |  1176 |    6 |     8 |      28 |      20 |   0.0010 |   0.0013 |   0.0036 |    20 |     0 |     0 | ok
+circuit-turnless       |   34 |   595 |    7 |    35 |     775 |     740 |   0.0395 |   0.0295 |   0.0338 |   740 |     0 |     0 | ok
+rooms                  |   30 |   465 |    0 |    27 |     395 |     368 |   0.0125 |   0.0092 |   0.0110 |   368 |     0 |     0 | ok
+circuit-turnless       |  128 |  8256 |    7 |    35 |     775 |     740 |   0.0381 |   0.0294 |   0.0881 |   740 |     0 |     0 | ok
+```
+
+Decision: PROTOTYPE-PASSED, not yet promoted. Correctness passed (`wDiff=0`, `sDiff=0`) and the drain-only result is a real speed signal on the propagation-bound targets: circuit `0.0395ms -> 0.0295ms` (~1.34x), rooms `0.0125ms -> 0.0092ms` (~1.36x), circuit-128 `0.0381ms -> 0.0294ms` (~1.30x). Knots regresses slightly (`0.0010ms -> 0.0013ms`) on a tiny propagation cascade, so full-run promotion must verify knots does not regress materially.
+
+Do not ship this exact `new Function` approach by default: it is hostile to browser CSP, harder to audit, and creates package-policy risk. The valuable learning is that H37/H38 failed because the algorithmic unit was already right, while H39 shows the hot AC-4 loop still has implementation headroom from inlining the MRV ban path and unrolling directions. Next candidate should be a clean static promotion, not eval: add a default-MRV specialized propagation path in `src-optimized/model.ts` that preserves the generic Entropy/Scanline path as fallback, inlines ban side effects, and gates with full `typecheck` + `prove-harness` + speed on knots/circuit/rooms.
