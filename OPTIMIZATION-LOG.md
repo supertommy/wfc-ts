@@ -1026,3 +1026,39 @@ Grep confirmation (pre-claim): all *reads* of `entropies[i]`, `sumsOfWeights[i]`
 **Cost:** stash/measure dance x2 + 2×(prove+3x5+mem+success) + type + cs-verify + impl + edits + log + commit ~25min wall + harness runs.
 
 Next candidate recommended (per return spec): H29 (drop dead entropy arrays) or H33 (flush micro), then re-profile optimized + ideation-4 or conclude.
+
+## Hypothesis 29 — drop dead entropy arrays under MRV (memory + micro clear-speed, completes MRV cleanup) [KEPT]
+
+**Hypothesis:** Since H22 (MRV default) + H30 (bucket PQ), the entropy state (weightLogWeights(T) + sumsOfWeights/sumsOfWeightLogWeights/entropies(count) + scalars sumOf*/startingEntropy + H10 *0 snapshots) is allocated, initialized in ctor/clear, snapshotted/restored, but *never read* under MRV (the default path). Ban guards the recompute; next/flush key on sumsOfOnes; only EntropyHeap (conditional) reads entropies. Dropping the dead allocs/writes under MRV is a pure first-principles "don't pay for what you don't use" win: ~55KB mem (circuit) + fewer per-cell writes in clear (tiny speed). Tier-1 for MRV (outputs byte-id); keep full paths for non-default heuristic:Entropy.
+
+**Change:** Exactly *one* file `src-optimized/model.ts` (per rules; no other src-optimized/ touched). Guard in init(): the weightLogWeights loop + sum* scalars + startingEntropy + sumsOfW*/entropies allocs + *0 cache allocs — only if Entropy (leave 0-len defaults otherwise). In clear(): guard the per-cell entropy writes (fill path) + the *0 .set() restore (fixpoint) + the *0 .set() capture (first clear) — MRV-relevant H10 state (wave/compat/sumsOfOnes/obs + buckets) stays unconditional. Ban already correctly guarded (sumsOfOnes decr + dirty-mark unconditional). nextUnobservedNode/flushHeapUpdates already branch (MRV path touches only sumsOfOnes). footprintBytes(): condition the entropy array .byteLength adds (0-len contribute 0 anyway; makes explicit). Updated stale comments for H29. EntropyHeap kept (used only under Entropy). Matches style, no debug, plain TS.
+
+**Gate + Measure (all real harness; no fabrication):**
+- `npx tsc --noEmit` clean.
+- `bun run harness/prove-harness.ts`: VALID+DET (viol=0) pre+post; DET re-runs identical; compare* FAIL unchanged (Tier-1, MRV path byte-id).
+- MEMORY (the target): `bun run harness/memory.ts` (before on stash of post-H30, after on change):
+
+| input               | before bytes | after bytes | delta   |
+|---------------------|--------------|-------------|---------|
+| knots-standard-48   | 518856       | 408192      | -110.7 KB |
+| circuit-turnless-34 | 730796       | 675020      | -55.8 KB  |
+| rooms-30            | 460352       | 416928      | -43.4 KB  |
+
+  Exact: 6 f64 arrays (3 live + 3 snap) * count*8 (+T*8) removed under MRV. footprint auto-reflects.
+- SPEED (must not regress for mem candidate; `measure-speedup.ts <in> 5` med-5; paired stash before/after):
+
+| input               | ref-b   | opt-b  | ref-a  | opt-a  | note          |
+|---------------------|---------|--------|--------|--------|---------------|
+| knots-standard-48   | ~10.04  | 1.075ms| ~10.00 | 1.074ms| flat / tiny gain |
+| circuit-turnless-34 | ~7.52   | 2.735ms| ~6.83  | 2.515ms| within noise (clear less) |
+| rooms-30            | ~3.22   | 1.294ms| ~3.16  | 1.264ms| tiny gain         |
+
+  No regression; micro clear win possible. (Machine noise on ref; opt stable.)
+- SUCCESS (Tier-1): `bun run harness/success-rate.ts knots-dense-24 50` → 100.0% both (unchanged).
+- ENTROPY-PATH SMOKE (manual, required since gate only tests default MRV): throwaway `scripts/smoke-entropy.ts` (construct knots-standard-24 + heuristic:Entropy, run seed1, validateTiling): ok=true + violations=0 + complete. Removed before commit. (Entropy path fully works.)
+
+**Decision:** KEEP (committed immediately). Meets *exact* keep criteria for Round-3 MEMORY candidate (lowest prio): VALID+DET pass; footprint DOWN on all; NO speed regression (flat/gain within var); success unchanged; Entropy path verified manually. Free win (no behavior change under default MRV). Completes the "MRV only pay for used state" vein from H22.
+
+**Cost:** pre (prove+mem+3x5+success) + stash dance for paired + impl (one edit batch) + post (type+prove+mem+3x5+success+entropy-smoke) + log/readme + commit ~12 min wall + harness runs.
+
+Next candidate recommended (per return spec in task): H33 (flush micro gen-wrap elide), then re-profile the OPTIMIZED (scripts/profile.ts stale) + ideation-4 / conclude toward ~25 iters.

@@ -53,14 +53,11 @@
 // HYPOTHESIS 10: preliminary-action pruning — cache the clear() fixpoint.
 //
 //   clear() does the full reset + boundary bans + initial propagate fixpoint + heap
-//   rebuild on EVERY run(seed). The state after bans+propagate (wave/compat/sums*/entropies/observed)
-//   is a deterministic function of (grid+tileset+periodic+ground) — NO seed dependence
-//   (mulberry32 created after clear in run()). Cache it once after first clear's work;
-//   later clears restore via fast typed-array .set() instead of recomputing bans+prop.
-//   (TRIZ P.10: perform the preliminary action in advance.) Heap rebuild left in place
-//   (O(cells) cheap relative to the O(C*T + bans) work saved). Speed primary axis; extra
-//   memory for the snapshot copy is ACCEPTABLE. Outputs identical to before (same start
-//   state for given seed) so compare* status is unchanged. Gate on VALID+DET.
+//   rebuild on EVERY run(seed). The state after bans+propagate (wave/compat/sumsOfOnes/observed + conditionally
+//   the entropy* sums/ent under Entropy heuristic) is a deterministic fn of (grid+tileset+periodic+ground)
+//   — NO seed dependence (mulberry32 created after clear in run()). Cache once after first clear;
+//   later clears restore via fast .set() (H29: entropy* snaps skipped under MRV). Heap rebuild kept
+//   (cheap O(cells)). Speed primary; snapshot mem ACCEPTABLE. Outputs identical; gate VALID+DET.
 //
 // HYPOTHESIS 12: restart-with-derived-seeds on contradiction (no undo stack).
 //
@@ -189,12 +186,15 @@ export abstract class Model {
   protected observedSoFar = 0;
 
   protected weights: Float64Array = new Float64Array(0);
+  // H29: only allocated+populated under Entropy (used only in guarded ban recompute); 0-len under MRV.
   protected weightLogWeights: Float64Array = new Float64Array(0);
   protected distribution: Float64Array = new Float64Array(0);
 
   // H28: auto-narrowed (by T<256→Uint8 exact) like H23 compatible / H26 prop / H27 stack.
   // MRV key (H22). Monotonic decr T	o0; never underflows below 0 (ban only on live).
   protected sumsOfOnes: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
+  // H29: entropy state (sumsOfWeights etc + weightLogWeights + *0) allocated ONLY under Entropy heuristic;
+  // under MRV (default) remain 0-len from field init (dead post H22). See init/clear guards.
   protected sumsOfWeights: Float64Array = new Float64Array(0);
   protected sumsOfWeightLogWeights: Float64Array = new Float64Array(0);
   protected entropies: Float64Array = new Float64Array(0);
@@ -242,10 +242,10 @@ export abstract class Model {
   // .set() restore/capture. Heap itself keeps Float64 prios.
   protected SumsOfOnesCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
 
-  // H10: cached post-clear fixpoint state (wave + compatible + sums + entropies + observed)
-  // after boundary bans + initial propagate (the maximally-pruned start state for this
-  // grid+tileset). Restored via .set() in clear(); captured once after first full clear.
-  // Deterministic (seed-independent). Heap left to rebuild each clear.
+  // H10: cached post-clear fixpoint state (wave + compatible + sumsOfOnes + observed + conditionally
+  // entropy* under Entropy heuristic only — H29) after boundary bans + initial propagate (the
+  // maximally-pruned start state for this grid+tileset). Restored via .set() in clear(); captured once
+  // after first full clear. Deterministic (seed-indep). Heap left to rebuild each clear.
   protected wave0: Uint8Array = new Uint8Array(0);
   // H23: same auto-narrowed type as the live compatible (chosen at init).
   protected compatible0: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
@@ -257,6 +257,7 @@ export abstract class Model {
   protected observed0: Int32Array = new Int32Array(0);
   protected hasFixpoint = false;
 
+  // H29: only set under Entropy; under MRV these stay 0 and are never read.
   protected sumOfWeights = 0;
   protected sumOfWeightLogWeights = 0;
   protected startingEntropy = 0;
@@ -353,22 +354,31 @@ export abstract class Model {
     this.distribution = new Float64Array(T);
     this.observed = new Int32Array(count);
 
-    this.weightLogWeights = new Float64Array(T);
-    this.sumOfWeights = 0;
-    this.sumOfWeightLogWeights = 0;
-    for (let t = 0; t < T; t++) {
-      const w = this.weights[t];
-      const wlw = w * Math.log(w);
-      this.weightLogWeights[t] = wlw;
-      this.sumOfWeights += w;
-      this.sumOfWeightLogWeights += wlw;
+    // H29 (completes MRV cleanup): weightLogWeights(T) + sumsOfWeights/sumsOfWeightLogWeights/entropies (count)
+    // + their H10 *0 caches + scalars are DEAD under MRV (default since H22). MRV keys on sumsOfOnes;
+    // ban() entropy recompute is already `if (Entropy)`; next/flush use sumsOfOnes under MRV.
+    // Allocate+maintain ONLY for Entropy (non-default) so MRV skips ~6 f64 arrays (~55KB circuit)
+    // + fewer per-cell writes + smaller snapshot. Defaults leave 0-len arrays (footprint auto 0).
+    // Entropy path must remain fully functional (arrays + EntropyHeap + startingEntropy used there).
+    if (this.heuristic === Heuristic.Entropy) {
+      this.weightLogWeights = new Float64Array(T);
+      this.sumOfWeights = 0;
+      this.sumOfWeightLogWeights = 0;
+      for (let t = 0; t < T; t++) {
+        const w = this.weights[t];
+        const wlw = w * Math.log(w);
+        this.weightLogWeights[t] = wlw;
+        this.sumOfWeights += w;
+        this.sumOfWeightLogWeights += wlw;
+      }
+      this.startingEntropy = Math.log(this.sumOfWeights) - this.sumOfWeightLogWeights / this.sumOfWeights;
+
+      this.sumsOfWeights = new Float64Array(count);
+      this.sumsOfWeightLogWeights = new Float64Array(count);
+      this.entropies = new Float64Array(count);
     }
-    this.startingEntropy = Math.log(this.sumOfWeights) - this.sumOfWeightLogWeights / this.sumOfWeights;
 
     this.sumsOfOnes = new this.SumsOfOnesCtor(count);
-    this.sumsOfWeights = new Float64Array(count);
-    this.sumsOfWeightLogWeights = new Float64Array(count);
-    this.entropies = new Float64Array(count);
 
     // H4/H30: create the selection structure for the chosen heuristic.
     // MRV (default) gets the bucket PQ (O(1) on integer 1..T keys); Entropy keeps the f64 heap.
@@ -394,9 +404,11 @@ export abstract class Model {
     this.wave0 = new Uint8Array(count * T);
     this.compatible0 = new this.CompatibleCtor(count * T4);
     this.sumsOfOnes0 = new this.SumsOfOnesCtor(count);
-    this.sumsOfWeights0 = new Float64Array(count);
-    this.sumsOfWeightLogWeights0 = new Float64Array(count);
-    this.entropies0 = new Float64Array(count);
+    if (this.heuristic === Heuristic.Entropy) {
+      this.sumsOfWeights0 = new Float64Array(count);
+      this.sumsOfWeightLogWeights0 = new Float64Array(count);
+      this.entropies0 = new Float64Array(count);
+    }
     this.observed0 = new Int32Array(count);
     this.hasFixpoint = false;
   }
@@ -639,11 +651,11 @@ export abstract class Model {
     this.stacksize++;
 
     this.sumsOfOnes[i] -= 1;
-    // H22: sumsOfWeights / sumsOfWeightLogWeights / entropies (the Math.log(plogp) recompute)
-    // are ONLY needed for Heuristic.Entropy selection. Under default MRV we use sumsOfOnes
-    // for the heap priority; guard to eliminate the per-ban log cost entirely (was ~8-12%
+    // H22/H29: sumsOfWeights / sumsOfWeightLogWeights / entropies (the Math.log(plogp) recompute)
+    // + weightLogWeights are ONLY needed for Heuristic.Entropy. Under default MRV we use sumsOfOnes
+    // for the bucket PQ priority; guard to eliminate the per-ban log cost entirely (was ~8-12%
     // of ban in H8 subprof). sumsOfOnes and the H6 dirty-mark MUST always run (MRV uses them).
-    // weights[]/weightLogWeights[] stay allocated (observe() builds dist from wave+weights).
+    // weights[] always allocated (observe() builds dist from wave+weights); weightLogWeights only under Entropy.
     if (this.heuristic === Heuristic.Entropy) {
       this.sumsOfWeights[i] -= this.weights[t];
       this.sumsOfWeightLogWeights[i] -= this.weightLogWeights[t];
@@ -714,9 +726,11 @@ export abstract class Model {
       this.wave.set(this.wave0);
       this.compatible.set(this.compatible0);
       this.sumsOfOnes.set(this.sumsOfOnes0);
-      this.sumsOfWeights.set(this.sumsOfWeights0);
-      this.sumsOfWeightLogWeights.set(this.sumsOfWeightLogWeights0);
-      this.entropies.set(this.entropies0);
+      if (this.heuristic === Heuristic.Entropy) {
+        this.sumsOfWeights.set(this.sumsOfWeights0);
+        this.sumsOfWeightLogWeights.set(this.sumsOfWeightLogWeights0);
+        this.entropies.set(this.entropies0);
+      }
       this.observed.set(this.observed0);
       this.observedSoFar = 0;
       this.stacksize = 0;
@@ -737,9 +751,11 @@ export abstract class Model {
         }
 
         this.sumsOfOnes[i] = weights.length;
-        this.sumsOfWeights[i] = this.sumOfWeights;
-        this.sumsOfWeightLogWeights[i] = this.sumOfWeightLogWeights;
-        this.entropies[i] = this.startingEntropy;
+        if (this.heuristic === Heuristic.Entropy) {
+          this.sumsOfWeights[i] = this.sumOfWeights;
+          this.sumsOfWeightLogWeights[i] = this.sumOfWeightLogWeights;
+          this.entropies[i] = this.startingEntropy;
+        }
         this.observed[i] = -1;
       }
       this.observedSoFar = 0;
@@ -783,18 +799,20 @@ export abstract class Model {
       this.wave0.set(this.wave);
       this.compatible0.set(this.compatible);
       this.sumsOfOnes0.set(this.sumsOfOnes);
-      this.sumsOfWeights0.set(this.sumsOfWeights);
-      this.sumsOfWeightLogWeights0.set(this.sumsOfWeightLogWeights);
-      this.entropies0.set(this.entropies);
+      if (this.heuristic === Heuristic.Entropy) {
+        this.sumsOfWeights0.set(this.sumsOfWeights);
+        this.sumsOfWeightLogWeights0.set(this.sumsOfWeightLogWeights);
+        this.entropies0.set(this.entropies);
+      }
       this.observed0.set(this.observed);
       this.hasFixpoint = true;
     }
 
     // H4/H30: after restore-or-compute of the fixpoint, (re)build the selection structure
     // (EntropyHeap or MRV BucketPQ) containing exactly the cells eligible for selection
-    // (pass the N-boundary filter) that still have sumsOfOnes > 1. Uses current entropies (or counts).
+    // (pass the N-boundary filter) that still have sumsOfOnes > 1. Uses current entropies (Entropy) or counts (MRV).
     // H6: reset batching state after rebuild.
-    // H10: rebuild kept (cheap O(cells)); the expensive fill+ban+prop is now elided on reuse.
+    // H10/H29: rebuild kept (cheap O(cells)); the expensive fill+ban+prop is now elided on reuse.
     const h = this.entropyHeap;
     const bq = this.mrvBuckets;
     const { MX, MY, N, periodic, sumsOfOnes, entropies, heuristic } = this;
@@ -845,20 +863,24 @@ export abstract class Model {
     bytes += this.dirtyHeapCells.byteLength;
     bytes += this.heapUpdateGen.byteLength;
     bytes += this.distribution.byteLength;
-    bytes += this.weightLogWeights.byteLength;
+    if (this.heuristic === Heuristic.Entropy) {
+      bytes += this.weightLogWeights.byteLength;
+      bytes += this.sumsOfWeights.byteLength;
+      bytes += this.sumsOfWeightLogWeights.byteLength;
+      bytes += this.entropies.byteLength;
+    }
     bytes += this.sumsOfOnes.byteLength;
-    bytes += this.sumsOfWeights.byteLength;
-    bytes += this.sumsOfWeightLogWeights.byteLength;
-    bytes += this.entropies.byteLength;
     bytes += this.observed.byteLength;
     bytes += this.neighbors.byteLength; // H31
     // H10: include snapshot copy (wave/compat/sums/ent/obs) so memory measurement reflects real delta
     bytes += this.wave0.byteLength;
     bytes += this.compatible0.byteLength;
     bytes += this.sumsOfOnes0.byteLength;
-    bytes += this.sumsOfWeights0.byteLength;
-    bytes += this.sumsOfWeightLogWeights0.byteLength;
-    bytes += this.entropies0.byteLength;
+    if (this.heuristic === Heuristic.Entropy) {
+      bytes += this.sumsOfWeights0.byteLength;
+      bytes += this.sumsOfWeightLogWeights0.byteLength;
+      bytes += this.entropies0.byteLength;
+    }
     bytes += this.observed0.byteLength;
     if (this.entropyHeap) bytes += this.entropyHeap.footprintBytes();
     if (this.mrvBuckets) bytes += this.mrvBuckets.footprintBytes(); // H30
