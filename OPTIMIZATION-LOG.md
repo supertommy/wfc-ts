@@ -690,3 +690,55 @@ Per rules: no code changes to src-optimized/ (or anywhere) because no winning me
 
 **Cost:** discovery + impl + 3xprove + 3xmeasure-speedup + success + mem + stepcheck script+run+rm + log/README + typecheck ~8-10 min wall time. All per rules (one iter, only src-optimized edited).
 
+## Hypothesis 18 — sparse live-set wave for restrictive tilesets (adaptive dense/sparse) — INVESTIGATE FIRST [REJECTED]
+
+**Hypothesis:** For restrictive tilesets where post-init live count per cell ≪ T, replace the dense `Uint8Array(count*T)` wave with a per-cell sparse live-set (unsorted list of live pattern ids + count; swap-remove on ban). This shrinks memory for wave and lets observe build dist by iterating only live ids (O(live) vs O(T)). The wave is *not* touched by the propagation decrement (uses compatible+propData), so H18 cannot move the 60-66% prop wall. It only touches observe (~4%), final extraction, and memory. Adaptive: choose sparse layout only if measured maxLive < threshold (e.g. T/2), else dense (knots permissive). Tier-1 (byte-id, same bans/selection/outputs). Per Round-3: memory lowest priority; KEEP only if footprint DOWN + NO speed regression on knots/circuit/rooms.
+
+**STEP 1 — INVESTIGATE (executed FIRST, per task; no impl until green):**
+
+Throwaway `scripts/measure-h18-sparsity.ts` (deleted after; no trace left) forced init+clear on optimized, read sumsOfOnes[] (live counts) post-fixpoint, plus monkey-patched to count bans-in-clear and to record sumsOfOnes at each observe() time. Also read footprintBytes and wave.byteLength. Grounded with `bun run harness/prove-harness.ts` and `bun run harness/memory.ts` + `measure-speedup`.
+
+Post-init (after clear fixpoint) live counts:
+
+| input | T | count | bans-in-clear | live avg | med | max | live/T |
+|-------|---|-------|---------------|----------|-----|-----|--------|
+| knots-standard-48 | 9 | 2304 | 0 | 9.00 | 9 | 9 | 100% |
+| circuit-turnless-34 | 36 | 1156 | 0 | 36.00 | 36 | 36 | 100% |
+| rooms-30 | 28 | 900 | 0 | 28.00 | 28 | 28 | 100% |
+
+All 100% of T. Reason: periodic inputs skip boundary bans entirely; rooms-30 has *zero* tiles with propLen[d][t]===0 in any dir (verified), and no ground → no bans, no propagate in first clear, sums remain =T everywhere. Max live at representation time =T for all cells.
+
+Observe-time live (when a cell with >1 is chosen; the O(live) that would benefit observe):
+
+- knots: avg 2.35 (med 2, max9) → 26.1% of T (N=2250 observes)
+- circuit: avg 3.66 (med 3, max36) → 10.2% of T (N=772)
+- rooms: avg 2.47 (med 2, max28) → 8.8% of T (N=519)
+
+Observe could scan fewer, but observe phase share is ~4% (prior profiles).
+
+Memory (real harness):
+
+- `bun run harness/memory.ts`: knots-48 650828 B (635.6 KB); circuit-turnless-34 1019836 B (995.9 KB); rooms-30 633164 B (618.3 KB)
+- dense wave: 20736 B / 41616 B / 25200 B  (count*T*1)
+- wave share of fp: 3.2% / 4.1% / 4.0%  (with H10 snapshot 2x: still ~6-8%)
+
+If sparse fixed-stride: liveIds Int8Array(count*maxLive) + liveCount Int32Array(count) (+ snapshots). Since init maxLive=T (must hold full set at start of clear before any reactive bans), stride=T → liveIds bytes = count*T (same as wave) + liveCount overhead 4*count*2 (snap) → net memory *increase*, no savings. Compatible (now narrow) + propData + heap dominate footprint.
+
+Current speed baseline (for context; `measure-speedup median-of-5`):
+- knots-standard-48: 1.641 ms (6.17x)
+- circuit-turnless-34: 3.400 ms (1.98x)
+- rooms-30: 1.705 ms (1.85x)
+
+**Decision gate (per task + optimize-one.md + README Round-3):**
+
+- live at init =T (avg 100% >> ~T/2) on the *restrictive inputs* → H18 has no memory representation win (cannot size buffers smaller) and no structural sparsity at the point the layout is chosen.
+- wave slice is tiny (3-4%) of total; even 100% elimination of wave would be a ~2% overall mem win (lowest prio axis).
+- speed benefit marginal (observe ~4% of time; live-at-obs small but ban maintenance on every ban (>>#observes) would cost find/swap or extra count*T position index, likely net zero or regress).
+- memory win that costs speed = REVERT per criteria. Here, no win even possible.
+
+**Decision: REJECT.** No implementation in src-optimized/. Honest negative result from measurement. Only log + README updated. Throwaway script removed before commit. (If future tilesets show init-pruned maxLive<<T, could revisit, but not on committed benchmarks.)
+
+**Cost:** STEP1 script (3 inputs) + 2x prove + mem + 3x measure-speedup + analysis + rm + edit log/README + commit ~7 min wall. All numbers from real harness runs; no fabrication.
+
+Next candidate recommended (per return spec): a fresh re-profile of post-H16/H22/H23 optimized (to quantify current % in prop vs other now that observe/ban cleaned), OR ideation pass (TRIZ/first-principles questioning the AC-4 greedy collapse itself) for angles toward ~25 iterations. H20 (multi-res) remains TODO but stretch and changes outputs.
+

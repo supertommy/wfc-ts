@@ -52,7 +52,7 @@ informational. See `prompts/optimize-one.md`.
 | H15 | watched-literal propagation (full AC-4 counts → single watched witness + fixed-pool dll watchers) | 2 (valid+det) | speed (circuit/rooms prop wall) | REVERTED | no win (regressed 5-23% on all; list mgmt+rescans > saved decrements); see log |
 | H16 | steppable/cancelable run loop (generator yielding every N observes) | 1 (byte-id, same output) | web-ecosystem / robustness | KEPT | *stepRun(seed,limit,budget,yieldEvery=1,signal?) generator yields {done,observedCell,attempt,cellsResolved,ok?,complete?}; run() direct loop unchanged (dupe logic in gen); cancel via break/return/abort; same outputs+VALID+DET+speed (no reg); step check (551 yields+final, cs match, cancel ok) on knots-24. See log. |
 | H17 | threat-first / annealed selection (resolve most-threatened cell first, or anneal acceptance) | 2 (valid+det) | success-rate | REJECTED | same as H14 — success axis maxed (H12); no measurable target. |
-| H18 | sparse live-set wave for restrictive tilesets (adaptive dense/sparse per tileset) | 1 (byte-id) | memory + speed | TODO | stretch; wins only when live ≪ T (circuit); bad for permissive (knots). |
+| H18 | sparse live-set wave for restrictive tilesets (adaptive dense/sparse per tileset) | 1 (byte-id) | memory + speed | REJECTED | STEP1: post-init live=100% of T (avg/med/max=T) on knots/circuit/rooms (0 init bans even for nonper rooms); observe-time live ~9-26% of T; wave slice 3.2-4.1% of fp (651/1020/633 KB total); maxLive=T at layout time → no mem win possible (stride=T + overhead); observe ~4% only so speed marginal at best. Mem lowest prio → REJECT (no code landed). See log. |
 | H19 | arena recycling (reuse collapsed-cell wave space for active watch/undo buffers) | 2 | memory (bounded under backtracking) | REJECTED | no backtracking landed (H13 rejected; H12 is restart-based, no undo stack) → arena recycling has no target. |
 | H20 | multi-resolution / nested-doll WFC (coarsen 2x2→1 macro-cell, then refine) | 2 | memory + speed (huge grids) | TODO | stretch; needs macro-tileset preprocessing; changes outputs. |
 | H21 | WebGPU propagation acceleration (optional path; portable JS fallback mandatory) | 2 | speed | REJECTED | REJECTED for committed benchmark (small 24-48 grids; seq. dep. cascade + dispatch/launch overheads dominate CPU 3.5ms path; cannot measure w/o native adapter setup in Bun/Node harness). Future stretch: parallel cellular relaxation for large-grid (256x+) *throughput*. See log. Plain-JS path untouched. |
@@ -184,7 +184,7 @@ is REVERTED. A speed win that costs memory is KEPT.
 7. H24 fast-log approx — REJECTED (subsumed by H22). H25 spatial — REJECTED after STEP1 (already clustered; see log).
 8. **H16 steppable/cancelable run — KEPT** (the web differentiator: *stepRun yields every N, AbortSignal or natural cancel, portable; run() verbatim fast path no-reg; same outputs; no other JS WFC offers step+cancel).
 9. H21 WebGPU — stretch speed path (now that H24/H25 rejected).
-10. Memory candidates (H18 sparse, H20 multi-res) — last; only if speed-neutral-or-better. (H11 wave-bitpack, H19 arena REJECTED: speed-cost / no-target.)
+10. Memory candidates (H18 sparse, H20 multi-res) — last; only if speed-neutral-or-better. H18 REJECTED after STEP1 (live=T at init on committed inputs; wave ~3-4% of fp; no mem win possible). H20 stretch. (H11/H19 REJECTED earlier.)
 
 **Round 3 target:** push circuit-turnless-34 and rooms-30 speedup vs reference
 well past the Round 2 wall (1.7x) toward >=3x via the algorithmic levers (H10/H15),
