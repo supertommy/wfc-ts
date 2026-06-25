@@ -38,7 +38,7 @@ export function createLiteModel(
   }
 
   // Expand using local faithful copy of mxgmn/kchap logic (see buildExpandedPropagator below).
-  const { T, propagator } = buildExpandedPropagator(tileset, subsetName);
+  const { T, propagator, weights: _weights } = buildExpandedPropagator(tileset, subsetName);
 
   if (T > 32 || T === 0) return null;
 
@@ -68,7 +68,7 @@ export function createLiteModel(
 }
 
 // --- local expansion (duplicated from mxgmn/kchap logic, read from references to ensure faithful) ---
-function buildExpandedPropagator(tileset: Tileset, subsetName: string | null): { T: number; propagator: number[][][] } {
+export function buildExpandedPropagator(tileset: Tileset, subsetName: string | null): { T: number; propagator: number[][][]; weights: number[] } {
   const sub = subsetName ? tileset.subsets.find((s) => s.name === subsetName) : null;
   const subset = sub ? new Set(sub.tiles) : null;
 
@@ -189,5 +189,5 @@ function buildExpandedPropagator(tileset: Tileset, subsetName: string | null): {
     propagator.push(prows);
   }
 
-  return { T, propagator };
+  return { T, propagator, weights: weightList };
 }
