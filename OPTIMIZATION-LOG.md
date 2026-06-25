@@ -1062,3 +1062,30 @@ Next candidate recommended (per return spec): H29 (drop dead entropy arrays) or 
 **Cost:** pre (prove+mem+3x5+success) + stash dance for paired + impl (one edit batch) + post (type+prove+mem+3x5+success+entropy-smoke) + log/readme + commit ~12 min wall + harness runs.
 
 Next candidate recommended (per return spec in task): H33 (flush micro gen-wrap elide), then re-profile the OPTIMIZED (scripts/profile.ts stale) + ideation-4 / conclude toward ~25 iters.
+
+## Hypothesis 33 — elide the gen-wrap guard in flushHeapUpdates (micro, settle honestly) [REVERTED]
+
+**Hypothesis:** The defensive wrap-guard in flushHeapUpdates ( `if (this.heapGen === 0) { this.heapGen=1; heapUpdateGen.fill(0); }` after `(gen+1)|0` ) is a predictable never-taken branch on every flush call (once per observe). #flushes per run() is O(count) ≤~2304 (one per collapse) * (1+restartBudget≤100) = ≤232k ≪ 2^32, so wrap never occurs in practice for this solver. Eliding removes the branch (and the fill), accepting the documented bound. (H6's gen dedup and heapUpdateGen array remain; clear() still resets them.) Expectation: win likely below noise because per-call (not per-cell) and highly predictable.
+
+**Change:** One file only: `src-optimized/model.ts` (inside flushHeapUpdates ~line 686). Replaced the 4-line guard with the direct `this.heapGen = (this.heapGen + 1) | 0; const g = this.heapGen;` plus one-line comment documenting the O(count)≪2^32 practical bound. No other edits. (Per hard rules: never touched src/, harness/, etc.)
+
+**Gate + Measure (all harness runs real; no fabrication; followed optimize-one.md + explicit task spec):**
+- Ground: `bun run harness/prove-harness.ts` (pre): VALID+DET viol=0 (compare* FAIL expected from H4+).
+- Type: `npx tsc --noEmit` clean on patched.
+- Gate on patched: `bun run harness/prove-harness.ts`: VALID DET viol=0 on all (knots-48 opt~0.88ms etc); DET re-runs matched; same as baseline.
+- SPEED before (clean post-H29 checkout) vs after (elided), using `bun run harness/measure-speedup.ts <in> 5` (median-of-5, same machine):
+
+| input               | ref ms | opt-before | opt-after (elided) | note             |
+|---------------------|--------|------------|--------------------|------------------|
+| knots-standard-48   | ~9.86  | 1.093 ms   | 1.072 ms           | ~1.9% "gain"   |
+| circuit-turnless-34 | ~6.82  | 2.480 ms   | 2.503 ms           | ~0.9% "regress"|
+| rooms-30            | ~3.59  | 1.265 ms   | 1.224 ms           | ~3.2% "gain"   |
+
+  All deltas within normal run-to-run variance on this machine (see prove runs vary 0.86-0.93 for knots etc). No consistent above-noise win. Flush is ~4-8% of nextUnobs phase per prior profiles, and the removed branch was per-flush-call not inner.
+- MEMORY (`bun run harness/memory.ts` after revert): unchanged vs post-H29 (heapUpdateGen still allocated at count*4B + filled in clear; 398.6/659.2/407.2 KB for knots/circ/rooms). Guard removal doesn't affect footprint.
+- SUCCESS: `bun run harness/success-rate.ts knots-dense-24 50` = 100% (unchanged from H12).
+- Re-ran prove post-revert: still PASS VALID+DET.
+
+**Decision:** REVERTED (git checkout -- src-optimized/model.ts). Meets criteria: gates passed on the change, but *no measurable above-noise speed win* (within noise, mixed direction); knots-48 no regression but no real win either. The guard is cheap (predictable) + defensive documentation of the 2^32 assumption; keeping a no-op elision is not worth the latent (theoretical) risk. Honest "tried it" outcome; perfectly valid per ratchet rules. (This was the LAST TODO candidate.) Guard restored.
+
+**Cost:** grounding + before 3x measure5 + impl (1 edit) + type+prove+after 3x measure5 + mem + success + revert + log+readme + commit ~8min wall + harness runs. Ran every required gate/measure; no shortcuts.
