@@ -10,7 +10,7 @@ Status: **IN PROGRESS**
 - [x] **Prompts docs** — `prompts/optimize-one.md` is comprehensive (full ratchet methodology) ✓
 - [x] **README polish** — final README.md with badges, install, usage, benchmarks, API ✓
 - [x] **External benchmark refresh** — rerun with final solver, update RESULTS.md ✓ 2.55–19.57x faster than all competitors
-- [ ] **OSS packaging** — package.json metadata, LICENSE check, .npmignore, publish prep
+- [x] **OSS packaging** — package.json metadata, LICENSE check, .npmignore, publish prep ✓
 
 ## Order
 
