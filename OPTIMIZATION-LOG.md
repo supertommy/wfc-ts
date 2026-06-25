@@ -1214,3 +1214,74 @@ Iters ≈ grid size (wavefront propagation diameter). GPU per-iter overhead ~0.4
 **Artifacts committed:** `scripts/webgpu-prototype.ts`, `bun-webgpu` devDep entry (prototype only), this log section. Prototype can be deleted post-review.
 
 All numbers real (no fab). Run on Apple M-series via bun-webgpu (Dawn). Commit after append.
+
+
+## WebGPU optimized prototype — large-grid crossover (iteration 2, fused+amortized) [Phase 4c]
+
+**Date:** 2026-06-25  (post Round-3 ratchet exhaustion)
+**Prototype:** `scripts/webgpu-prototype-v2.ts` (throwaway; extends naive v1; reuses Exposed + trigger harness; no src/ edits)
+**Target:** Circuit / Turnless (T=36, dense heavy-prop where CPU AC-4 slows at scale) vs. prior knots (T=9, lighter). Periodic. Trigger = one interior cell collapsed to 1 (ban T-1), then full propagate-to-fixpoint wall (CPU: propagate(); GPU: setup excluded, only the compute+final readback).
+
+**OPTIMIZED formulation implemented:**
+- FUSED kernel (one dispatch/iter): worklist-driven only. For each live frontier (i1,t1): for each d, each t2 in prop[d* T +t1]: i2=neighbors[i1*4+d]; prev=atomicSub(compat[i2*T4 + t2*4 + d],1); if prev==1 AND wave[i2*T+t2]==1: CAS wave 1->0 (claim), atomicStore 0 to all 4 compats for (i2,t2), atomic append (i2,t2) to next worklist. Matches CPU ban rule exactly (ban on first dir-support hitting 0). No full-grid scan.
+- AMORTIZED readback: ping-pong two worklist buffers; dispatch *exactly* diameter=max(MX,MY) times with *only* queued writeBuffer(reset nxt count) + submit; no mapAsync, no host decisions mid-cascade. Kernel always dispatches maxWgs=ceil(N*T/64) but early-outs when curCount=0 (no-op iters cheap on empty frontier). ONE final submit+mapAsync phase copies final wave + trailing work-count.
+- Still uses same initial state capture (post-ban wave/compat + stack as first worklist).
+
+**Implementation notes (plain TS+WGSL, bun-webgpu):** wave declared atomic<u32>, compat atomic<i32>; cur/next worklists atomic<u32> (for load/add/store); prop normalized to u32 for simplicity. CAS uses atomicCompareExchangeWeak; only claimer appends+zeros. Dispatch overhead + atomics + buffer traffic all real costs.
+
+**Q1 CORRECTNESS (gate before any timing claims):** YES — 100% wave match on circuit-turnless 34x34 periodic.
+
+- Trigger cell 595 t=0 (T=36).
+- CPU propagate: success=false (contradiction), 4.36ms.
+- GPU: 34 dispatches (diam), finalWorkCount=36, 7.08ms.
+- Diffs: 0 / 41616 slots.
+- Re-matches after reset for every larger size in Q2 too (see below).
+- The `prev==1` + CAS + zero-on-claim + worklist append logic is correct vs. CPU's `--c ===0 ? ban()` (which zeros + pushes). AC-4 confluence means level-sync batching still reaches identical fixpoint set.
+- Note: finalWorkCount==36 (T) on every size for this trigger family; it is the "last layer" bans of 36 patterns discovered in the diameter-th step. Since wave matched, processing them would not have banned anything further (no additional count-to-0 hits). Diameter bound was *sufficient* to produce the complete banned set for these cases.
+
+**Q2 CROSSOVER (the question: does GPU win on circuit-large where CPU is slow?):**
+
+Live measurements (Apple M GPU via bun-webgpu/Dawn; real wall; median-ish single runs; GPU = only dispatches + 1 readback):
+
+| size   | CPU AC-4 | GPU fused | dispatches | match | winner    |
+|--------|----------|-----------|------------|-------|-----------|
+| 34x34  | 4.25 ms  | 7.14 ms   | 34         | true  | CPU (~1.7x) |
+| 64x64  | 9.57 ms  | 10.71 ms  | 64         | true  | CPU (~1.1x) |
+| 128x128| 37.80 ms | 15.00 ms  | 128        | true  | **GPU 2.5x** |
+| 256x256| 168.78 ms| 54.78 ms  | 256        | true  | **GPU 3.1x** |
+
+Crossover: GPU first beats CPU at **128x128**. At 256x256, GPU ~3x faster (168ms→54ms) while CPU has exploded due to dense T=36 propagation (total decrements scale with grid + high avg fanout).
+
+For reference (from prior log): knots-256 CPU ~26.7ms (light prop); circuit-256 CPU 168ms = 6.3x more work — exactly the heavy-prop regime where parallel worklist wins.
+
+**Dispatch / readback / overhead analysis:**
+- GPU always performs *diameter* dispatches (no early exit reads).
+- Per-"dispatch" avg (full time / diam, includes the final mapAsync amortized + all writes/binds/submits):
+  - 34: ~0.210 ms/disp
+  - 64: ~0.167 ms/disp
+  - 128: ~0.117 ms/disp
+  - 256: ~0.214 ms/disp  (higher because large frontiers do real work per level)
+- Contrast to naive v1: ~0.45-0.5 ms/iter (2 mapAsync + 2 dispatches + 2 writes). Here fused+no-read cut it roughly in half, and removed the O(N*T) detect scan.
+- At 256: 256 launches * ~dispatch cost is still visible in the 54ms floor, but the *compute* (atomic decrs over huge total frontier work) now dominates enough to cross over vs CPU's serial decrement loop.
+- The "deep cascade" (depth~diameter) is paid as 256 short dispatches. On Apple GPU this is ~100-200us per (launch+emptyish exec+queue). Still, for T=36 heavy at 256 the total GPU time undercuts the CPU serial work.
+- No-op dispatches after real depth < diam: do happen (finalWorkCount captured from the diam-th step), but cheap; the lastWork=36 suggests the measured depth for this trigger was ~diam (or the last level produced T entries that were terminal).
+
+**Honest assessment of GPU feasibility for WFC prop:**
+WFC propagation per observe is a *deep wavefront cascade* (depth = O(grid diameter) worst-case) with data-dependent frontier size, not an embarrassingly-parallel fixed workload. This is hostile to the "many short dispatches" model:
+- Even optimized, you pay launch overhead × diam.
+- In naive, readback × diam killed it everywhere.
+- Here, the optimization *did cross over* on the relevant heavy tileset at 128+.
+- However, dispatch granularity is the floor: at 256 we see ~50+ ms still spent largely on 256 dispatches (even with useful work inside). For even larger grids (512+) diam=512 would double the launch tax unless we add periodic count sampling (K-step read of work-count) or true device-side loop (impractical in current WGSL without extensions).
+- Alternative algs (e.g. GPU-friendly non-AC-4, or cell-parallel observe+prop in one big kernel, or multi-observe batching) would be needed to make GPU a consistent win rather than "only on biggest+heaviest".
+- For the current optimized CPU (post-H31 ~11x on knots, 3x on circuit), a WebGPU port would be a large lift for marginal/conditional gains only on big circuit-like inputs.
+
+**Verdict + recommendation:**
+- Q1: PASS (correct fused ban logic).
+- Q2: GPU *does cross over* on circuit at >=128 (wins 2.5–3x at 256). The amortized formulation succeeded where naive failed.
+- BUT: WFC's deep-cascade × dispatch-overhead is a real (if now surmountable at 256) tax. On this hardware+API, GPU parallel-AC-4 is *viable for large heavy grids* but not a universal accelerator. The per-dispatch cost × diam remains the fundamental limit for this exact prop strategy.
+- Recommend: **do not greenlight a full integrated large-grid GPU solver in src/** for now. The throwaway shows the optimization path can win on circuit-256, but the engineering cost + limited applicability (only biggest cases, only heavy tilesets) + maintenance (WebGPU + fallback) does not justify vs. continuing the pure-JS ratchet (which already made CPU "fast enough" for the target sizes). If a future use-case needs 512x512+ circuit or has different workload (e.g. many parallel independent WFCS), revisit with indirect dispatch or persistent kernel.
+- Artifacts: `scripts/webgpu-prototype-v2.ts` + this report section. (v1 left as-is for history.)
+
+All numbers real, captured from the run above (no fabrication). Ran 2026-06-25 on same Apple Silicon env as prior prototypes.
+
+Commit after append + `git status` check (only scripts/ touched).
