@@ -13,41 +13,34 @@
 - `cdafc5b` - Add Summer game tileset with unique tile support
 - `4e64dae` - Fix tile rendering with subsets and rotation direction
 
-## Next Task: Success Rate Ratchet Loop
+## Success Rate Ratchet — COMPLETED
 
-**Problem:** WFC often hits contradictions on harder tilesets (Summer 48×48 fails ~50%+ of seeds).
+**H46: LCV (Least Constraining Value) — KEPT** ✅
 
-**Goal:** Improve success rate using the same ratchet methodology we used for speed.
+Implemented in commit `5d10b99`. When selecting which tile to collapse to,
+weight by how many options each candidate leaves for neighbors.
 
-### Ratchet Setup
+### Results
 
-**Metric:** Success rate (% of seeds that complete without contradiction)  
-**Gate:** VALID when successful, speed ≤ 1.1x baseline  
-**Test case:** Summer 48×48, 100 seeds, periodic=true
+| Test Case | Before | After | Improvement |
+|-----------|--------|-------|-------------|
+| Summer 48×48 periodic | 14% | **72%** | **+58pp (5.1×)** |
+| Summer 48×48 non-periodic | 92% | **100%** | **+8pp** |
+| Speed | baseline | maintained | No regression |
 
-### Hypotheses to Test (in order)
+### How It Works
 
-1. **H1: LCV (Least Constraining Value)**
-   - When choosing which tile to collapse to, pick the one that leaves the most options for neighbors
-   - Expected: significant success rate improvement, minor speed cost
-   - Location: `src-optimized/model.ts` in the observe/collapse logic
+In `observe()`, instead of pure weighted random:
+1. For each candidate tile t, count "freedom" = total compatible tiles across all neighbors
+2. Weight = original_weight × (1 + freedom)
+3. Higher freedom tiles are more likely to be picked
 
-2. **H2: Smarter MRV tiebreaker**
-   - When multiple cells have same entropy, pick the one whose neighbors are most constrained
-   - Expected: moderate improvement
+This is deterministic (same seed = same result) and actually faster
+(fewer restarts = less wasted work).
 
-3. **H3: Propagation order**
-   - Process most-constrained cells first in the AC-4 propagation queue
-   - Expected: small improvement
+### Remaining Hypotheses (if needed)
 
-4. **H4: Limited backtracking**
-   - On contradiction, undo last N choices and retry with different tiles
-   - Expected: large improvement but complexity cost
-   - Consider: checkpoint/restore state efficiently
-
-5. **H5: Weighted retry**
-   - Track which early tile choices led to failures, bias against them on retry
-   - Expected: moderate improvement for retry scenarios
+H46 was so effective that further hypotheses may not be needed:
 
 ### Files to Create
 
