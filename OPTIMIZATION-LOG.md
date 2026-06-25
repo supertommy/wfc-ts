@@ -382,3 +382,25 @@ Round 3: H15 attempted+reverted (no win on prop wall). Next per attack order: H1
 **Cost:** grounding (prove + 3x success + 3x measure5 + 2x mem) + impl (doc+derive+run edit) + post gates/measures (typecheck + prove + 3x success + 3x measure5 + 2x mem + det experiments) ~8min wall + harness runs.
 
 Next candidate recommended: H13 (CDCL-style learning). The restart loop already supports it: on contradiction we can inspect the final stack/wave to extract the conflicting partial assignment and carry a forbid-set into subsequent attempts' clears (or a global nogood across runs). Does the current infra make that cheap? Yes — clear is now a restore point we can further customize. (See return summary.)
+
+## Hypothesis 13 — CDCL-style conflict learning across restarts (success/speed-on-hard-seeds) [REJECTED]
+
+**Hypothesis:** With restart loop in place (H12), track per-attempt observe sequence; on contradiction, blame the most recent observe that led to 0-option cell, record a tabu counter per (cell,pattern). In later attempts' observe, downweight or skip high-tabu patterns for that cell. Decay tabu across restarts. Goal: lower median attempts on hard seeds (speed) or enable completion on cases H12 still fails (success). Deterministic under (seed,budget). Tier-2; gate VALID+DET (under new contract).
+
+**Investigation (STEP 1 — do this FIRST, per task; no blind impl):** Constructed harder stress cases ad hoc (script under scripts/, NO edits to performance-test/inputs/). Used Knots Dense subset + Circuit Turnless at larger sizes: knots-dense-48x48 periodic, knots-dense-64x64 periodic, circuit-48x48 periodic. Ran current optimized (H12) for N=50 (or 30 for 64) seeds each, instrumenting temporarily to expose attempts-used on success (reverted post-measure). Measured completion rate AND median attempts-to-complete.
+
+**STEP 1 stress measurements (H12 current, default budget=100):**
+
+| case              | N  | completion     | median att | mean att | max att |
+|-------------------|----|----------------|------------|----------|---------|
+| knots-dense-48    | 50 | 50/50 (100.0%) | 0.0       | 0.1     | 1      |
+| knots-dense-64    | 30 | 30/30 (100.0%) | 0.0       | 0.1     | 1      |
+| circuit-48        | 50 | 50/50 (100.0%) | 0.0       | 0.1     | 1      |
+
+Re-verified on committed: `bun run harness/success-rate.ts knots-dense-24 50` → 100%; `bun run harness/prove-harness.ts` VALID+DET (viol=0).
+
+**Decision gate (per task):** H12 already gets ~100% on the harder cases AND median attempts ≈ 0 (max 1) — far below the "high like 5+" threshold. No completion gap remains and restarts are almost never triggered. CDCL has no measurable benefit on target (neither raises completion nor reduces attempts on cases that matter). Per spec: **REJECT H13**. Do NOT implement CDCL. Revert temp instrumentation + remove throwaway script; COMMIT log+README only.
+
+Recommend: the loop should PIVOT to SPEED ideation (the unmet axis: circuit/rooms propagation wall; H5/H8/H15 all REVERTED with evidence that micro-trims on the decrement loop do not pay). No external bar left; propagation is the algorithmic wall.
+
+**Cost:** STEP1 stress (3 cases × N) + success-rate + 2	imes prove-harness + typecheck + doc edits + reverts + commit ~4min wall + harness runs. Honest negative result recorded.

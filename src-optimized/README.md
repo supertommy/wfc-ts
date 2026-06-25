@@ -47,13 +47,13 @@ informational. See `prompts/optimize-one.md`.
 | H10 | cache clear() fixpoint (prelim-action pruning): snapshot wave/compat/sums/ent/obs post-bans+initial-prop; restore .set() on reuse | 2 (valid+det) | speed (all; clear 8-12%) + success (N seeds) | KEPT | subprof clear 7.7-11% (0.26-0.46ms); medians opt: knots 1.993→1.799 / circ 4.896→4.479 / rooms 2.248→1.950 ms (5.51→5.93x /1.55→1.61x /1.55→1.71x); mem +426kB knots-48 (acceptable); success 95% unch; VALID+DET (compare* FAIL from H4); see log |
 | H11 | bitpacked wave (1 bit/pattern) + narrow compatible (Uint16/Uint8, counts capped at 255) | 1 (byte-id, layout-only) | memory | TODO | easy memory win; wave 8x, compatible 2-4x. Guard saturation. |
 | H12 | restart-with-derived-seeds on contradiction (no undo stack) | 2 (valid+det; new contract: seed+budget) | success-rate | KEPT | 95%→100% on knots-dense-24 (N=100); deriveRestartSeed(base,k) pure mulberry-mix; speed flat (within noise) on knots-48/circuit/rooms; mem unchanged; VALID+DET (new contract); see log |
-| H13 | CDCL-style conflict learning across restarts (learn forbidden collapse-combos, forbid next restart) | 2 (valid+det) | success-rate (big swing) | TODO | the miniSAT engine; makes hard inputs actually solvable. Highest-leverage success idea. |
+| H13 | CDCL-style conflict learning across restarts (learn forbidden collapse-combos, forbid next restart) | 2 (valid+det) | success-rate (big swing) | REJECTED | STEP1: H12 already 100% + median att=0 on harder 48/64 cases (knots-dense-48/64, circuit-48); no target for CDCL (see log). Pivot to speed ideation on prop wall. |
 | H14 | one-step look-ahead selection (forward-checking-lite; pick collapse minimizing threatened cells) | 2 (valid+det) | success-rate | TODO | prevents immediate dead-ends, no backtracking; cost ~T/observe, hard-inputs mode. |
 | H15 | watched-literal propagation (full AC-4 counts → single watched witness + fixed-pool dll watchers) | 2 (valid+det) | speed (circuit/rooms prop wall) | REVERTED | no win (regressed 5-23% on all; list mgmt+rescans > saved decrements); see log |
 | H16 | steppable/cancelable run loop (generator yielding every N observes) | 1 (byte-id, same output) | web-ecosystem / robustness | TODO | no JS WFC lib does this; table-stakes for browser use + visualizer. |
 | H17 | threat-first / annealed selection (resolve most-threatened cell first, or anneal acceptance) | 2 (valid+det) | success-rate | TODO | stretch; escape bad basins; needs experiment. |
 | H18 | sparse live-set wave for restrictive tilesets (adaptive dense/sparse per tileset) | 1 (byte-id) | memory + speed | TODO | stretch; wins only when live ≪ T (circuit); bad for permissive (knots). |
-| H19 | arena recycling (reuse collapsed-cell wave space for active watch/undo buffers) | 2 | memory (bounded under backtracking) | TODO | depends on H12/H13 landing; keeps memory bounded as run progresses. |
+| H19 | arena recycling (reuse collapsed-cell wave space for active watch/undo buffers) | 2 | memory (bounded under backtracking) | TODO | depends on H12 (H13 rejected); keeps memory bounded as run progresses. |
 | H20 | multi-resolution / nested-doll WFC (coarsen 2x2→1 macro-cell, then refine) | 2 | memory + speed (huge grids) | TODO | stretch; needs macro-tileset preprocessing; changes outputs. |
 | H21 | WebGPU propagation acceleration (optional path; portable JS fallback mandatory) | 2 | speed | TODO | stretch; WebGPU allowed but MUST keep plain-JS path working in Node+browser. |
 
@@ -174,8 +174,8 @@ is REVERTED. A speed win that costs memory is KEPT.
 1. H10 preliminary-action pruning — wins on ALL THREE axes, IFR-aligned, low risk.
 2. H15 watched-literal propagation — the circuit/rooms speed wall (full watched
    literals, accept the extra watch-list memory since speed > memory).
-3. H12 restart-with-derived-seeds, then H13 CDCL conflict learning — the
-   success-rate frontier (make hard inputs actually completable).
+3. H12 restart-with-derived-seeds (KEPT: 100% on dense+harder cases w/ ~0 retries) — success-rate frontier met.
+   (H13 CDCL rejected after STEP1: no remaining target on harder cases.)
 4. H14 look-ahead / H17 threat-annealed selection — success-rate refinements.
 5. H16 steppable run loop — web-ecosystem robustness (needed for "best on web").
 6. H21 WebGPU — stretch speed path only if 1-5 don't reach the target.
@@ -184,10 +184,14 @@ is REVERTED. A speed win that costs memory is KEPT.
 
 **Round 3 target:** push circuit-turnless-34 and rooms-30 speedup vs reference
 well past the Round 2 wall (1.7x) toward >=3x via the algorithmic levers (H10/H15),
-AND raise knots-dense-24 completion rate (success-rate.ts) from 92% -> >=99% via
-H12/H13 (H12 achieved 95%→100%); while holding knots-48 >=6x. The real stop is idea exhaustion: an
+AND (H12 achieved dense 95%→100%). H13 rejected after investigation (H12 already 100% on harder cases with ~0 retries).
+The remaining axis is SPEED on circuit/rooms prop wall (H5/H8/H15 reverted). The real stop is idea exhaustion: an
 ideation pass (see optimize-one.md STALL->IDEATE) yields no new high-payoff
 candidate. Minimum ~25 iterations or until exhausted.
+
+**Post-H13 (this iteration):** STEP1 stress (knots-dense-48/64, circuit-48, N=30-50) showed H12
+completes 100% with median attempts=0 (max=1). CDCL has no target. Per task instruction:
+REJECT without impl; pivot recommendation to SPEED ideation on propagation (the unmet axis).
 
 ## Exit criteria (the orchestrator checks each loop turn)
 
