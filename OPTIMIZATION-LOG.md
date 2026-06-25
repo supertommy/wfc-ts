@@ -999,3 +999,30 @@ Grep confirmation (pre-claim): all *reads* of `entropies[i]`, `sumsOfWeights[i]`
 **Decision:** KEEP (committed immediately). Meets *exact* keep criteria for Round 3 SPEED candidate: VALID+DET mandatory pass; knots-48 no regression; *real* above-noise speed gain on circuit AND rooms (the 85%+ wall); mem growth accepted. Tier-1 (byte-identical outputs, same i2 sequence). This realizes the "remove wrap cost" intent (previously noted as periodic fastpath ideation) in the cleanest portable way — precomp table, no duplication, works for all periodic settings. (Note: the original H31 ideation entry in iter-15 described a periodic fastpath; we implemented+kept the precomp table under same H31 label per task, as it is the superior general mechanism for the described cost.)
 
 **Cost:** pre measures (prove+3x5+mem+success) + impl+verify + post (type+prove+3x5+mem+success) + edits + log + commit ~15 min wall + harness runs.
+
+## Hypothesis 30 — MRV bucket priority queue (Dial buckets O(1) amortized replace f64 heap) [KEPT]
+
+**Hypothesis:** The iter-15 profile shows nextUnobservedNode (H4 heap extract + H6 flush) at 22% on knots-48 (secondary after prop). Under default MRV (H22), the heap key is sumsOfOnes — a small integer in 1..T (T≤36). Replace the binary min-heap (O(log n) per extract/update) with a bucket PQ (Dial's algorithm): buckets[1..T] each a doubly-linked list of cell indices (typed arrays: bucketHead[T+1], cellNext/Prev/Bucket[count]). extract-min advances minBucket pointer (O(T) total over whole run) then scans short list for min cell index (exact match to heap's lower-i tie-break on equal prio). Update on decrease (ban): unlink+relink O(1); if lower bucket, adjust min. Integrates with H6 flush (coalesced dirtied cells moved to current bucket or dropped if <=1); after flush, buckets authoritative → zero-staleness extract (cleaner than lazy heap). clear() populates buckets. Keep EntropyHeap for non-default Entropy heuristic (additive, preserves API; MRV default uses buckets only). Scanline untouched.
+
+**Change:** Two files under src-optimized/ only (per rules): (1) new `bucket-pq.ts` (BucketPQ impl with link/unlink/advance/popMin/updateCell/clear/footprint; plain TS, matches surrounding comments+style). (2) `model.ts` — add import + mrvBuckets field + conditional alloc in init() (MRV→BucketPQ(count,T); Entropy→heap; Scanline→none); update dirty-mark in ban() to trigger for either; generalize flushHeapUpdates to branch on heuristic (shared gen dedup, then heap remove/update or bq.updateCell); branch in nextUnobservedNode (MRV: flush then bq.popMin() with >1 guard); conditional rebuild in clear(); footprint include buckets. No other paths changed; heap kept; no deadcode removed (H29 separate). Checksums confirmed identical to pre-H30 (Tier-1 byte-id for selection).
+
+**Gate + Measure (followed optimize-one + task; all real harness; no fabrication):** 
+- `npx tsc --noEmit` clean.
+- `bun run harness/prove-harness.ts`: VALID+DET (viol=0) pre+post; DET re-runs match; compare* FAIL status unchanged (from H4). Checksum of observed for committed seeds identical to heap-MRV → byte-id.
+- SPEED (primary; `measure-speedup.ts * 5` med5; before on stash of post-H31 heap, after on bucket; paired machine):
+
+| input               | ref ms | opt-heap | opt-bucket | speedup-b | speedup-a |
+|---------------------|--------|----------|------------|-----------|-----------|
+| knots-standard-48   | ~10.1  | 1.337 ms | 1.045 ms   | 7.55x     | 9.54x     |
+| circuit-turnless-34 | ~6.7   | 2.628 ms | 2.550 ms   | 2.55x     | 2.65x     |
+| rooms-30            | ~3.2   | 1.390 ms | 1.240 ms   | 2.28x     | 2.62x     |
+
+  knots (target) real win 1.337→1.045ms (~22% drop, 1.28x on opt); circ/rooms small but + above noise; no knots regression. Directly targets the 22% nextUnobs (now buckets O(1) vs logN+f64).
+- MEMORY (`harness/memory.ts`): heap 528044/735284/463848 B → bucket 518856/730796/460352 B (deltas -9kB / -4.5kB / -3.5kB). Buckets ~12B/count +4(T+1) vs heap ~16B/count; win.
+- SUCCESS (Tier-1): `bun run harness/success-rate.ts knots-dense-24 50` → 100.0% (unchanged).
+
+**Decision:** KEEP (committed). Meets *exact* keep criteria for Round 3 SPEED (primary): VALID+DET pass; knots-48 no regression (big gain); *real* above-noise speed gain on knots (main) + circ/rooms. Mem slightly down (bonus). Tier-1: same min-(sums,i) selection as heap → identical outputs/checksums vs post-H31. (Dial overhead did not dominate; win at these n/T.) 
+
+**Cost:** stash/measure dance x2 + 2×(prove+3x5+mem+success) + type + cs-verify + impl + edits + log + commit ~25min wall + harness runs.
+
+Next candidate recommended (per return spec): H29 (drop dead entropy arrays) or H33 (flush micro), then re-profile optimized + ideation-4 or conclude.

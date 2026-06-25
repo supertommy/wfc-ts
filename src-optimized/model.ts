@@ -104,6 +104,7 @@
 
 import { mulberry32, type Random } from "./prng.js";
 import { EntropyHeap } from "./entropy-heap.js";
+import { BucketPQ } from "./bucket-pq.js";
 
 export const enum Heuristic {
   Entropy = 0,
@@ -198,9 +199,14 @@ export abstract class Model {
   protected sumsOfWeightLogWeights: Float64Array = new Float64Array(0);
   protected entropies: Float64Array = new Float64Array(0);
 
-  // H4 heap for O(log n) selection of next cell to observe (Entropy/MRV).
-  // Rebuilt in clear(); updated via ban().
+  // H4 heap for O(log n) selection of next cell to observe (Entropy only).
+  // Rebuilt in clear(); updated via ban(). MRV uses BucketPQ (H30) for O(1) amortized.
   protected entropyHeap: EntropyHeap | null = null;
+
+  // H30: bucket PQ (Dial's) for MRV using integer keys sumsOfOnes ≈ [1..T].
+  // Doubly-linked per bucket for O(1) unlink on decrease; min-i tie-break in min bucket.
+  // Allocated only for MRV; integrates with same H6 dirty batch + flush path.
+  protected mrvBuckets: BucketPQ | null = null;
 
   // H6: batching for heap updates (coalesce per-cell bans into one decrease-key/remove per phase)
   // Dirty list populated in ban(); flushed (with dedup) in nextUnobservedNode before extract.
@@ -364,7 +370,14 @@ export abstract class Model {
     this.sumsOfWeightLogWeights = new Float64Array(count);
     this.entropies = new Float64Array(count);
 
-    this.entropyHeap = new EntropyHeap(count);
+    // H4/H30: create the selection structure for the chosen heuristic.
+    // MRV (default) gets the bucket PQ (O(1) on integer 1..T keys); Entropy keeps the f64 heap.
+    // Scanline uses neither. Always allocate the dirty/gen buffers (shared by flush path).
+    if (this.heuristic === Heuristic.Entropy) {
+      this.entropyHeap = new EntropyHeap(count);
+    } else if (this.heuristic === Heuristic.MRV) {
+      this.mrvBuckets = new BucketPQ(count, T);
+    }
 
     const stackCap = count * T;
     this.stackI = new this.StackICtor(stackCap);
@@ -543,20 +556,31 @@ export abstract class Model {
       return -1;
     }
 
-    // H4: O(log n) via heap. Lazy deletion for collapsed/stale entries.
-    // Deterministic: no noise; on equal priority, lower cell index wins.
+    // H4 (Entropy) / H30 (MRV): selection structure.
+    // Deterministic: no noise; on equal priority, lower cell index wins (heap composite or explicit min-i in bucket).
     // (PRNG is no longer consumed here; only in observe weightedPick.)
     // H6: flush batched updates first so the min reflects all bans since prior extract.
+    // For MRV buckets: flush moves to current sums bucket (or drops <=1); extract has no staleness.
     this.flushHeapUpdates();
+    const { sumsOfOnes, entropies } = this;
+    if (heuristic === Heuristic.MRV) {
+      const bq = this.mrvBuckets;
+      if (!bq || bq.isEmpty()) return -1;
+      const i = bq.popMin();
+      if (i == null || i < 0) return -1;
+      if (sumsOfOnes[i] <= 1) return -1; // defensive (flush should have kept only >1)
+      return i;
+    }
+
+    // Entropy path (unchanged H4/H6)
     const heap = this.entropyHeap;
     if (!heap) return -1;
-    const { sumsOfOnes, entropies } = this;
     while (!heap.isEmpty()) {
       const entry = heap.popEntry();
       if (!entry) break;
       const i = entry.key;
       if (sumsOfOnes[i] <= 1) continue;
-      const currPrio = heuristic === Heuristic.Entropy ? entropies[i] : sumsOfOnes[i];
+      const currPrio = entropies[i];
       if (entry.entropy !== currPrio) continue; // stale (from prior higher value)
       return i;
     }
@@ -628,23 +652,24 @@ export abstract class Model {
       this.entropies[i] = Math.log(sum) - this.sumsOfWeightLogWeights[i] / sum;
     }
 
-    // H6: mark cell dirty for *batched* heap update (coalesces multiple bans to same cell
-    // into a single decrease-key/remove). No per-ban sift cost. Flush applies before next extract.
+    // H6: mark cell dirty for *batched* selection update (heap or MRV buckets H30).
+    // Coalesces multiple bans to same cell into one update/remove. Flush before extract.
     // (See flushHeapUpdates + nextUnobservedNode.)
     const h = this.entropyHeap;
-    if (h) {
+    const bq = this.mrvBuckets;
+    if (h || bq) {
       this.dirtyHeapCells[this.dirtyCount++] = i;
     }
   }
 
   /**
-   * H6: flush all dirtied cells to the heap with coalesced update/remove.
-   * Called before extract-min so that selection sees up-to-date priorities.
-   * Dedups via heapGen so a cell banned N times since last flush pays only 1 sift.
+   * H6: flush all dirtied cells to the active selection structure (EntropyHeap or H30 BucketPQ for MRV)
+   * with coalesced update/remove. Called before extract so selection sees up-to-date priorities.
+   * Dedups via heapGen so a cell banned N times since last flush pays only 1 sift/update.
+   * For buckets (MRV): direct move to current sumsOfOnes bucket (or remove); NO lazy/stale entries remain.
    */
   private flushHeapUpdates(): void {
-    const h = this.entropyHeap;
-    if (!h || this.dirtyCount === 0) return;
+    if (this.dirtyCount === 0) return;
 
     this.heapGen = (this.heapGen + 1) | 0;
     if (this.heapGen === 0) {
@@ -654,19 +679,27 @@ export abstract class Model {
     const g = this.heapGen;
     const gens = this.heapUpdateGen;
     const { sumsOfOnes, entropies, heuristic } = this;
+    const h = this.entropyHeap;
+    const bq = this.mrvBuckets;
 
     for (let k = 0; k < this.dirtyCount; k++) {
       const i = this.dirtyHeapCells[k];
       if (gens[i] === g) continue; // coalesced
       gens[i] = g;
 
-      if (sumsOfOnes[i] <= 1) {
-        h.remove(i);
-      } else {
-        const prio = (heuristic === Heuristic.Entropy ? entropies[i] : sumsOfOnes[i]);
-        if (!h.update(i, prio)) {
-          h.push(i, prio);
+      if (heuristic === Heuristic.Entropy) {
+        if (!h) continue;
+        if (sumsOfOnes[i] <= 1) {
+          h.remove(i);
+        } else {
+          const prio = entropies[i];
+          if (!h.update(i, prio)) {
+            h.push(i, prio);
+          }
         }
+      } else if (heuristic === Heuristic.MRV) {
+        if (!bq) continue;
+        bq.updateCell(i, sumsOfOnes[i]);
       }
     }
     this.dirtyCount = 0;
@@ -757,20 +790,28 @@ export abstract class Model {
       this.hasFixpoint = true;
     }
 
-    // H4: after restore-or-compute of the fixpoint, (re)build the heap
-    // containing exactly the cells eligible for selection (pass the N-boundary
-    // filter) that still have sumsOfOnes > 1. Uses current entropies (or counts).
+    // H4/H30: after restore-or-compute of the fixpoint, (re)build the selection structure
+    // (EntropyHeap or MRV BucketPQ) containing exactly the cells eligible for selection
+    // (pass the N-boundary filter) that still have sumsOfOnes > 1. Uses current entropies (or counts).
     // H6: reset batching state after rebuild.
-    // H10: heap rebuild kept (cheap O(cells)); the expensive fill+ban+prop is now elided on reuse.
+    // H10: rebuild kept (cheap O(cells)); the expensive fill+ban+prop is now elided on reuse.
     const h = this.entropyHeap;
+    const bq = this.mrvBuckets;
+    const { MX, MY, N, periodic, sumsOfOnes, entropies, heuristic } = this;
     if (h) {
       h.clear();
-      const { MX, MY, N, periodic, sumsOfOnes, entropies, heuristic } = this;
       for (let i = 0; i < this.count; i++) {
         if (!periodic && (i % MX + N > MX || ((i / MX) | 0) + N > MY)) continue;
         if (sumsOfOnes[i] > 1) {
-          const prio = heuristic === Heuristic.Entropy ? entropies[i] : sumsOfOnes[i];
-          h.push(i, prio);
+          h.push(i, entropies[i]);
+        }
+      }
+    } else if (bq) {
+      bq.clear();
+      for (let i = 0; i < this.count; i++) {
+        if (!periodic && (i % MX + N > MX || ((i / MX) | 0) + N > MY)) continue;
+        if (sumsOfOnes[i] > 1) {
+          bq.updateCell(i, sumsOfOnes[i]);
         }
       }
     }
@@ -820,6 +861,7 @@ export abstract class Model {
     bytes += this.entropies0.byteLength;
     bytes += this.observed0.byteLength;
     if (this.entropyHeap) bytes += this.entropyHeap.footprintBytes();
+    if (this.mrvBuckets) bytes += this.mrvBuckets.footprintBytes(); // H30
     return bytes;
   }
 
