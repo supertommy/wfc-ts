@@ -272,3 +272,33 @@ typecheck+prove, after 3x measure5, gate, log+readme, commit).
 **Decision:** REVERT (`git checkout -- src-optimized/model.ts`). VALID+DET held (incl. re-runs), knots within noise (flat/slight var). But circuit/rooms showed no REAL above-noise improvement: diffs ±0.03 to 0.15ms depending on run pair, fully within observed run-to-run variance (0.05–0.2ms across measure/prove); sometimes flat, sometimes slight regress on prop targets. The log savings were offset by extra work/branches in flush path (now always computes for entropy case). Math.log on this engine + tiny T not high enough payoff after H6 batching. (Subprof identified the lever correctly but end-to-end win did not materialize.)
 
 **Cost:** ~1 LLM turn + ~25min wall (subprof 4 runs + 2x revert instr, 8+ measure5 runs across stashes/checkouts for paired before/after + noise, 6x prove-harness for gate+ms, many typechecks, edits, log+readme, commit).
+
+## Round 2 conclusion (H5+ propagation-push) — STOPPED at exhaustion
+
+Tried 4 hypotheses; **1 KEPT (H6), 3 REVERTED (H5/H7/H8), 1 REJECTED (H9)**.
+
+| H | candidate | result | key measurement |
+|---|-----------|--------|------------------|
+| H5 | propagation in-loop skip/dedup | REVERTED | hot-path branch+load overhead > saved (knots 2.05->2.25ms, circuit 4.95->6.67ms) |
+| H6 | batched heap updates (coalesce decrease-key on ban) | KEPT | rooms 2.54->2.13ms (-16%), circuit 4.96->4.70ms (-5%), knots held; VALID+DET |
+| H7 | observe cumsum+bisect (O(T) weighted pick) | REVERTED | byte-id preserved but cumsum rebuild is O(T); no gain vs linear scan at T=9/36 (within noise) |
+| H8 | defer entropy Math.log from ban to flush | REVERTED | ban sub-profile: entropy/plogp is biggest ban sub-cost; deferring nets no win (work moves, no coalescing) |
+| H9 | eliminate dist[] in observe | REJECTED | sub-micro of H7's failed lever; H7's negative result implies no measurable gain |
+
+Final optimized vs reference (prove-harness, VALID+DET, viol=0): knots-standard-48
+6.45x (1.62ms), circuit-turnless-34 1.73x (4.32ms), rooms-30 1.70x (1.88ms) -- up
+from the Round 1 end state (6.3x / 1.66x / 1.71x) via H6 alone.
+
+The 2.5x soft target on circuit/rooms was NOT reached and is NOT reachable by
+ratcheting the current algorithm. The Round 2 baseline profile (fresh this round)
+shows propagation at 60-66% of optimized time; H5 proved the propagation decrement
+loop cannot be trimmed with guards (common case has live compatible patterns, so
+skip-branches cost more than they save). The decrement loop is already flat CSR
+with AC-4 support counts -- close to optimal for the simple-tiled-model
+propagation algorithm. A further circuit/rooms win would require a DIFFERENT
+propagation algorithm, which is out of scope for the ratchet (it optimizes the
+existing algorithm; a new algorithm is a separate project).
+
+Stop reason (exit criteria (a)): every high-payoff candidate tried; the fresh
+Round 2 baseline profile + the H8 ban sub-profile reveal no new high-payoff
+candidate. Propagation is an algorithmic wall, not a micro-architectural one.

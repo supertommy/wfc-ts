@@ -43,7 +43,7 @@ informational. See `prompts/optimize-one.md`.
 | H6 | heap decrease-key cost on large-T (many bans) — batch/lazy heap updates | 2 (valid+det) | ban + heap (circuit T=36) | KEPT | batching: opt 2.03→1.97 / 4.96→4.70 / 2.54→2.13 ms (knots/circuit/rooms); +5-16% on prop-bound; no knots regress; VALID+DET |
 | H7 | observe weighted-pick is O(T) per collapse — precompute/cumsum for large T | 1 (byte-id) | observe (circuit T=36) | REVERTED | O(T) cumsum+bisect no gain vs linear (circuit 4.73→4.72ms within noise); exact sel. preserved (byte-id vs H6); see log |
 | H8 | ban per-call overhead (sums updates + 4x compat zero + entropy + heap update/remove) for high ban volume | 2 (valid+det) | ban+heap (25-31% on circuit/rooms) | REVERTED | no above-noise gain (entropy subprof largest but Math.log defer net ~0 within var); see log |
-| H9 | eliminate dist[] materialization in observe (direct wave+weights scan for sum/pick, still O(T) but save stores) | 1 (byte-id) | observe (4%) | TODO | — |
+| H9 | eliminate dist[] materialization in observe (direct wave+weights scan for sum/pick, still O(T) but save stores) | 1 (byte-id) | observe (4%) | REJECTED | low-Amdahl sub-micro of the observe phase; H7 already showed observe O(T) reorders yield no measurable gain at T=9/36, so a strictly smaller observe tweak (saving a few stores) cannot net a win. Not worth an iteration. |
 
 H3 (index-ordered active-cell bitset to trim the scan) is **deliberately skipped**:
 H4's heap replaces the scan entirely, so H3 would be throwaway work.
@@ -94,3 +94,28 @@ Stop the loop when EITHER:
   passing; or
 - every candidate in the list is marked KEPT / REVERTED / REJECTED (nothing left
   untried, and re-profiling shows no high-payoff new candidate).
+
+## Round 2 conclusion (H5+ propagation-push) — STOPPED at exhaustion
+
+Tried 4 hypotheses this round; **1 KEPT (H6), 3 REVERTED (H5/H7/H8), 1 REJECTED
+(H9)**. Final optimized vs reference (prove-harness, VALID+DET): knots-48 6.45x
+(1.62ms), circuit 1.73x (4.32ms), rooms 1.70x (1.88ms) — up from the Round 1 end
+state (6.3x / 1.66x / 1.71x) on the back of H6 alone.
+
+The 2.5x soft target on circuit/rooms was NOT reached and is not reachable by
+ratcheting the current algorithm: the Round 2 baseline profile (fresh this round)
+shows propagation at 60-66% of the optimized time, and H5 empirically proved the
+propagation decrement loop cannot be trimmed with guards (the branch+load
+overhead exceeds the skipped work because the common case has live compatible
+patterns). H7 showed observe O(T) is already fast at T=9/36. H8's ban sub-profile
+found entropy/plogp (Math.log) is the biggest ban sub-cost, but deferring it to
+the H6 flush nets no win (the work moves without coalescing). H9 is a sub-micro
+of the already-failed H7 lever.
+
+**The wall is propagation, and it's algorithmic, not micro-architectural.** The
+decrement loop is already flat CSR with AC-4 support counts — close to optimal
+for the simple-tiled-model propagation algorithm. A further circuit/rooms win
+would require a different propagation algorithm (out of scope for the ratchet,
+which optimizes the existing algorithm; a new algorithm is a separate project).
+Loop stopped on exhaustion: every high-payoff candidate tried, fresh profiles
+reveal no new high-payoff candidate.
