@@ -1878,3 +1878,29 @@ SPEEDUP rooms-30 (median-of-5): ref 3.731ms | opt 1.300ms | speedup 2.87x
 Decision: REVERT. Correctness gates passed, but full-run speed regressed compared with the established Round-3 baseline (circuit ~2.77x, rooms ~3.22x, knots ~11.5x). As with H41, the single-propagation drain-only prototype signal did not survive full-solver measurement. The local FIFO queue likely changes collapse/progression/cache behavior across the full run and adds head/tail access shape that costs more than the isolated drain win.
 
 Learning: all Round 4 planned CPU loop-rethinking candidates have now been measured. H37/H38 changed the propagation formulation/unit and lost; H39 found a non-shippable eval-generated drain win; H41/H42 failed to promote the promising micro-signals into full-run speed. Next step should be an explicit STALL→IDEATE pass before deciding to stop: look for genuinely new CPU mechanisms beyond (a) dirty-cell bitsets, (b) cell-batched AC-4, (c) generated/static propagation specialization, and (d) FIFO/order changes.
+
+
+## Round 4 STALL→IDEATE — TRIZ pass [CONTINUE]
+
+Method: TRIZ (Genrich Altshuller).
+
+Contradiction: we want propagation faster, but every attempt to reduce propagation work by changing the unit/order of work adds bookkeeping, over-scanning, or JIT complexity that degrades full-run speed. The Ideal Final Result is: the support-count decrement updates happen with no per-update arithmetic, no extra queues, and no algorithmic shape change.
+
+Refused obvious repeats:
+- Dirty-cell/domain recomputation — already H37, correct but over-scanned.
+- Cell-batched AC-4 — already H38, correct but bookkeeping outweighed setup savings.
+- Static hand-specialization / eval codegen — H39/H41 showed a micro-signal that did not ship cleanly.
+- FIFO/order changes — H40/H42 showed a micro-signal that did not survive full-run speed.
+
+TRIZ translations:
+
+1. **Preliminary Action / Taking Out → precomputed compatible offsets (H43).**
+   Today the inner decrement loop reads `t2 = propData[start+l]`, computes `cidx = base2 + t2*4 + d`, decrements, and only if the count reaches zero needs `t2` for `ban(i2,t2)`. Precompute a parallel `propCompatOffset[start+l] = t2*4+d` (Uint8 for current `T4 < 256`). The common path becomes `if (--compatible[base2 + propCompatOffset[start+l]] === 0) { const t2 = propData[start+l]; ban(i2,t2); }`. This removes multiply/add and the common-case tile-id dependency from every decrement while preserving exact AC-4 semantics. **High payoff / low risk; test next.**
+
+2. **Preliminary Action → precomputed neighbor compatible bases (H44).**
+   Store `neighborCompatBase[i*4+d] = neighbor*T4` or `-1` alongside `neighbors`. This removes `base2 = i2*T4` from every popped-ban/direction setup. Lower payoff than H43 because it targets the outer loop, but it composes with H43 if H43 wins.
+
+3. **Skipping / Periodic Action → speculative multi-observe batches (H45).**
+   Collapse a small batch of spatially separated MRV cells before a propagation drain, then rely on deterministic restarts if stale choices create contradictions. This could reduce observe→propagate cycles, but it risks success/order and must be script-local/full-run first. It is a later, high-risk candidate, not the next move.
+
+Decision: CONTINUE. The ideation pass did yield a genuinely new low-risk high-payoff candidate: H43. It is not another queue/algorithm rewrite; it attacks the common-case arithmetic inside the already-winning AC-4 decrement loop. Next iteration should implement H43 in `src-optimized/` and gate normally.
