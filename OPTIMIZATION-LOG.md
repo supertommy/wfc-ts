@@ -1753,3 +1753,42 @@ circuit-turnless       |  128 |  8256 |    7 |    35 |     775 |     740 |   0.0
 Decision: PROTOTYPE-PASSED, not yet promoted. Correctness passed (`wDiff=0`, `sDiff=0`) and the drain-only result is a real speed signal on the propagation-bound targets: circuit `0.0395ms -> 0.0295ms` (~1.34x), rooms `0.0125ms -> 0.0092ms` (~1.36x), circuit-128 `0.0381ms -> 0.0294ms` (~1.30x). Knots regresses slightly (`0.0010ms -> 0.0013ms`) on a tiny propagation cascade, so full-run promotion must verify knots does not regress materially.
 
 Do not ship this exact `new Function` approach by default: it is hostile to browser CSP, harder to audit, and creates package-policy risk. The valuable learning is that H37/H38 failed because the algorithmic unit was already right, while H39 shows the hot AC-4 loop still has implementation headroom from inlining the MRV ban path and unrolling directions. Next candidate should be a clean static promotion, not eval: add a default-MRV specialized propagation path in `src-optimized/model.ts` that preserves the generic Entropy/Scanline path as fallback, inlines ban side effects, and gates with full `typecheck` + `prove-harness` + speed on knots/circuit/rooms.
+
+## Hypothesis H41 — static default-MRV specialized propagation path [REVERTED]
+
+Hypothesis: promote H39's winning generated-kernel signal without eval by adding a hand-written default-MRV propagation path in `src-optimized/model.ts`. The MRV path inlines `ban()` side effects and unrolls the four directions, while Entropy/Scanline keep the existing generic path.
+
+Change attempted:
+- `propagate()` dispatched to `propagateMrvSpecialized()` when `heuristic === Heuristic.MRV`.
+- The specialized path destructured hot arrays, kept local `stacksize`/`dirtyCount`, unrolled directions 0..3, and inlined the MRV ban side effects: clear wave, zero four compatible counts, push `(cell,tile)` onto the stack, decrement `sumsOfOnes`, append to `dirtyHeapCells`.
+- Existing generic `propagateGeneric()` remained as fallback for Entropy/Scanline.
+
+Gates:
+
+```text
+bun run typecheck
+PASS
+
+bun run harness/prove-harness.ts
+FINAL: PASS — harness proven against identity copy (gate: valid + deterministic)
+```
+
+Measurement:
+
+```text
+bun run harness/measure-speedup.ts knots-standard-48 5
+SPEEDUP knots-standard-48 (median-of-5): ref 10.907ms | opt 1.305ms | speedup 8.36x
+bun run harness/measure-speedup.ts circuit-turnless-34 5
+SPEEDUP circuit-turnless-34 (median-of-5): ref 7.158ms | opt 3.999ms | speedup 1.79x
+bun run harness/measure-speedup.ts rooms-30 5
+SPEEDUP rooms-30 (median-of-5): ref 3.308ms | opt 1.481ms | speedup 2.23x
+
+rerun:
+SPEEDUP knots-standard-48 (median-of-5): ref 10.561ms | opt 1.290ms | speedup 8.18x
+SPEEDUP circuit-turnless-34 (median-of-5): ref 7.275ms | opt 3.964ms | speedup 1.84x
+SPEEDUP rooms-30 (median-of-5): ref 3.314ms | opt 1.468ms | speedup 2.26x
+```
+
+Decision: REVERT. Although gates passed, full-run speed regressed materially on the propagation-bound targets compared with the established Round-3 optimized solver (circuit/rooms should be ~2.7x/~3.2x vs reference, not ~1.8x/~2.2x). The H39 `new Function` result did not transfer to a hand-written method: likely the larger method/branch dispatch and duplicated code shape caused JIT inlining/register-pressure/deopt costs that swamp the micro drain benefit. This confirms why script-local drain timings are only a lead; full-run gate decides.
+
+Learning: do not promote broad hand-written specialization in `Model` without a full-run win. The next Round 4 candidate should return to low-risk measurement: H40 propagation ordering (FIFO/spatial/ring vs current LIFO) as a script-local or isolated optional variant, then stop/ideate if it fails.

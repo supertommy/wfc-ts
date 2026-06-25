@@ -144,7 +144,8 @@ Round 4 loop rules:
 Round 4 progress:
 - Iteration 1 H37 dirty-cell bitset propagation was correct but slower; rejected.
 - Iteration 2 H38 cell-batched AC-4 was correct but slower; rejected.
-- Iteration 3 H39 generated propagation kernel was correct and faster on circuit/rooms single-propagation drains, but used `new Function`; do **not** ship eval. Next candidate is H41: static default-MRV specialized propagation in `src-optimized/model.ts`, preserving generic fallback and full gates.
+- Iteration 3 H39 generated propagation kernel was correct and faster on circuit/rooms single-propagation drains, but used `new Function`; do **not** ship eval.
+- Iteration 4 H41 static default-MRV specialized propagation passed gates but regressed full-run speed, so the model change was reverted. Next candidate is H40 propagation ordering (FIFO/spatial/ring vs current LIFO), then ideate/stop if no win.
 
 The GPU ratchet loop is also STOPPED. The no-spin WebGPU paths tested after compact did not produce a viable crossover.
 
