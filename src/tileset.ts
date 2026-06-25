@@ -41,7 +41,7 @@ function attr(tag: string, name: string): string | undefined {
 /** Parse a mxgmn tileset XML string into structured data. */
 export function parseTileset(xml: string, name: string): Tileset {
   const setTag = xml.match(/<set\b[^>]*>/);
-  const unique = setTag ? attr(setTag[0], "unique") === "true" : false;
+  const unique = setTag ? attr(setTag[0], "unique")?.toLowerCase() === "true" : false;
 
   // Scope each section: `<tile>` appears both as a tile definition (in <tiles>)
   // and as a subset member reference (in <subsets>). Only the <tiles> block

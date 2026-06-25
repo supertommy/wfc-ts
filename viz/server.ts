@@ -25,6 +25,7 @@ const tilesets = {
   Knots: loadTileset("Knots"),
   Circuit: loadTileset("Circuit"),
   Rooms: loadTileset("Rooms"),
+  Summer: loadTileset("Summer"),
 };
 
 // Default subsets to match canonical mxgmn behavior
@@ -32,6 +33,7 @@ const defaultSubsets: Record<string, string | null> = {
   Knots: "Standard",
   Circuit: "Turnless",
   Rooms: null,
+  Summer: null,
 };
 
 // Build tile info by creating a model and extracting expanded tilenames
@@ -61,11 +63,12 @@ const tileInfo = {
   Knots: buildTileInfo(tilesets.Knots, defaultSubsets.Knots),
   Circuit: buildTileInfo(tilesets.Circuit, defaultSubsets.Circuit),
   Rooms: buildTileInfo(tilesets.Rooms, defaultSubsets.Rooms),
+  Summer: buildTileInfo(tilesets.Summer, defaultSubsets.Summer),
 };
 
 // Serve static files and API
 const server = Bun.serve({
-  port: 3000,
+  port: 3456,
   async fetch(req) {
     const url = new URL(req.url);
     
@@ -75,6 +78,7 @@ const server = Bun.serve({
         Knots: tileInfo.Knots,
         Circuit: tileInfo.Circuit,
         Rooms: tileInfo.Rooms,
+        Summer: { ...tileInfo.Summer, unique: tilesets.Summer.unique },
       });
     }
     
@@ -187,6 +191,8 @@ const server = Bun.serve({
       const subset = url.searchParams.get("subset");
       const periodic = url.searchParams.get("periodic") !== "false";
       
+      console.log(`[canonical] tileset=${tilesetName} size=${width}x${height} seed=${seed} periodic=${periodic} subset=${subset}`);
+      
       // Use default subset if none provided
       const effectiveSubset = subset ?? defaultSubsets[tilesetName] ?? null;
       
@@ -228,15 +234,21 @@ const server = Bun.serve({
         if (pngFile) {
           const png = readFileSync(join(outputDir, pngFile));
           writeFileSync(samplesPath, originalSamples);
+          console.log(`[canonical] Success: ${pngFile} (${png.length} bytes)`);
           return new Response(png, {
-            headers: { "Content-Type": "image/png" },
+            headers: { 
+              "Content-Type": "image/png",
+              "Access-Control-Allow-Origin": "*",
+            },
           });
         }
         
         writeFileSync(samplesPath, originalSamples);
+        console.log(`[canonical] Error: No output generated`);
         return Response.json({ error: "No output generated" }, { status: 500 });
       } catch (e) {
         writeFileSync(samplesPath, originalSamples);
+        console.log(`[canonical] Error: ${e}`);
         return Response.json({ error: String(e) }, { status: 500 });
       }
     }
@@ -282,7 +294,7 @@ const server = Bun.serve({
     }
     
     // Static files
-    let filePath = url.pathname === "/" ? "/index.html" : url.pathname;
+    let filePath = url.pathname === "/" ? "/index.html" : decodeURIComponent(url.pathname);
     const fullPath = join(here, filePath);
     
     try {

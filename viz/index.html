@@ -101,6 +101,7 @@
         <option value="Knots">Knots</option>
         <option value="Circuit">Circuit</option>
         <option value="Rooms">Rooms</option>
+        <option value="Summer">Summer (game)</option>
       </select>
     </label>
     <label>
@@ -209,23 +210,48 @@
       
       const info = tilesetInfo[tilesetName];
       const images = {};
-      const uniqueNames = [...new Set(info.tiles.map(t => t.name))];
+      const isUnique = info.unique;
       
-      await Promise.all(uniqueNames.map(name => {
-        return new Promise((resolve, reject) => {
-          const img = new Image();
-          img.onload = () => {
-            images[name] = img;
-            tileSize = img.width; // Get actual tile size from image
-            resolve();
-          };
-          img.onerror = () => {
-            console.warn(`Failed to load tile: ${name}`);
-            resolve(); // Continue anyway
-          };
-          img.src = `/tiles/${tilesetName}/${name}.png`;
-        });
-      }));
+      if (isUnique) {
+        // For unique tilesets, load each pre-rotated image by full tilename
+        const fullNames = info.tiles.map((t, i) => `${t.name} ${t.rotation}`);
+        const uniqueFullNames = [...new Set(fullNames)];
+        
+        await Promise.all(uniqueFullNames.map(fullName => {
+          return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+              images[fullName] = img;
+              tileSize = img.width;
+              resolve();
+            };
+            img.onerror = () => {
+              console.warn(`Failed to load tile: ${fullName}`);
+              resolve();
+            };
+            img.src = `/tiles/${tilesetName}/${fullName}.png`;
+          });
+        }));
+      } else {
+        // For non-unique tilesets, load base images only
+        const uniqueNames = [...new Set(info.tiles.map(t => t.name))];
+        
+        await Promise.all(uniqueNames.map(name => {
+          return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+              images[name] = img;
+              tileSize = img.width;
+              resolve();
+            };
+            img.onerror = () => {
+              console.warn(`Failed to load tile: ${name}`);
+              resolve();
+            };
+            img.src = `/tiles/${tilesetName}/${name}.png`;
+          });
+        }));
+      }
       
       tileImages[tilesetName] = images;
       return images;
@@ -277,15 +303,25 @@
           
           if (tileIdx >= 0 && info && info.tiles[tileIdx]) {
             const tile = info.tiles[tileIdx];
-            const img = images[tile.name];
+            const isUnique = info.unique;
+            
+            // For unique tilesets, use full name; for others, use base name
+            const imgKey = isUnique ? `${tile.name} ${tile.rotation}` : tile.name;
+            const img = images[imgKey];
             
             if (img) {
-              ctx.save();
-              ctx.translate(dx + displayTileSize / 2, dy + displayTileSize / 2);
-              // mxgmn rotates CCW, canvas rotates CW for positive angles, so negate
-              ctx.rotate(-(tile.rotation * Math.PI) / 2);
-              ctx.drawImage(img, -displayTileSize / 2, -displayTileSize / 2, displayTileSize, displayTileSize);
-              ctx.restore();
+              if (isUnique) {
+                // Pre-rotated images: draw directly
+                ctx.drawImage(img, dx, dy, displayTileSize, displayTileSize);
+              } else {
+                // Apply rotation for non-unique tilesets
+                ctx.save();
+                ctx.translate(dx + displayTileSize / 2, dy + displayTileSize / 2);
+                // mxgmn rotates CCW, canvas rotates CW for positive angles, so negate
+                ctx.rotate(-(tile.rotation * Math.PI) / 2);
+                ctx.drawImage(img, -displayTileSize / 2, -displayTileSize / 2, displayTileSize, displayTileSize);
+                ctx.restore();
+              }
             } else {
               // Fallback: colored square
               ctx.fillStyle = `hsl(${(tileIdx * 37) % 360}, 60%, 50%)`;
@@ -446,12 +482,17 @@
       const periodic = periodicInput.checked;
       
       // Map tileset to subset (for comparison)
-      const subsets = { Knots: 'Standard', Circuit: 'Turnless', Rooms: null };
+      const subsets = { Knots: 'Standard', Circuit: 'Turnless', Rooms: null, Summer: null };
       const subset = subsets[tilesetName];
+      
+      // Summer doesn't work with periodic boundaries and struggles at larger sizes
+      const canonicalPeriodic = tilesetName === 'Summer' ? false : periodic;
+      const canonicalWidth = tilesetName === 'Summer' ? Math.min(width, 16) : width;
+      const canonicalHeight = tilesetName === 'Summer' ? Math.min(height, 16) : height;
       const subsetParam = subset ? `&subset=${subset}` : '';
       
       try {
-        const res = await fetch(`/api/canonical?tileset=${tilesetName}&width=${width}&height=${height}&seed=${seed}&periodic=${periodic}${subsetParam}`);
+        const res = await fetch(`/api/canonical?tileset=${tilesetName}&width=${canonicalWidth}&height=${canonicalHeight}&seed=${seed}&periodic=${canonicalPeriodic}${subsetParam}`);
         if (res.ok) {
           const blob = await res.blob();
           canonicalImg.src = URL.createObjectURL(blob);
