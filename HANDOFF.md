@@ -146,7 +146,8 @@ Round 4 progress:
 - Iteration 2 H38 cell-batched AC-4 was correct but slower; rejected.
 - Iteration 3 H39 generated propagation kernel was correct and faster on circuit/rooms single-propagation drains, but used `new Function`; do **not** ship eval.
 - Iteration 4 H41 static default-MRV specialized propagation passed gates but regressed full-run speed, so the model change was reverted.
-- Iteration 5 H40 propagation ordering prototype was correct and showed a consistent FIFO drain-only win (~1.1-1.17x on circuit/rooms). Next candidate is H42: promote simple FIFO queue discipline in `src-optimized/model.ts` with full gates; revert if full-run speed regresses.
+- Iteration 5 H40 propagation ordering prototype was correct and showed a consistent FIFO drain-only win (~1.1-1.17x on circuit/rooms).
+- Iteration 6 H42 minimal FIFO propagation passed gates but regressed full-run speed, so the model change was reverted. All planned Round 4 CPU candidates have been measured; next loop turn should run a STALL→IDEATE pass for genuinely new CPU mechanisms, then stop if no high-payoff path appears.
 
 The GPU ratchet loop is also STOPPED. The no-spin WebGPU paths tested after compact did not produce a viable crossover.
 

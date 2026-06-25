@@ -1838,3 +1838,43 @@ fifo-1032   |  0.0343 |        1.115 |       775 |    740 |     0 |     0 | ok
 Decision: PROTOTYPE-PASSED, not yet promoted. Correctness passed (`wDiff=0`, `sDiff=0`) for every ordering. FIFO variants show a consistent drain-only win over current `propagate()` on the propagation targets: ~1.11x on circuit, ~1.17x on rooms, ~1.12x on circuit-128. Direction order had little effect; `fifo-0123` is the simplest candidate because it changes only stack discipline, not neighbor order.
 
 Next candidate: H42 promote FIFO propagation order in `src-optimized/model.ts` with full gates. Implement as a minimal queue discipline change if possible: process pending `(cell,tile)` in insertion order while appending derived bans at the tail, preserve `ban()` semantics and dirty-list behavior, then run `typecheck`, `prove-harness`, and full `measure-speedup` on knots/circuit/rooms. If full-run speed regresses like H41, revert.
+
+## Hypothesis H42 — FIFO propagation queue discipline in optimized model [REVERTED]
+
+Hypothesis: promote H40's simplest winning order: process pending `(cell,tile)` bans in insertion order while preserving direction order `0,1,2,3` and all existing `ban()` side effects. This should carry the FIFO drain-only locality win into the full optimized solver with a minimal model change.
+
+Change attempted:
+- In `src-optimized/model.ts`, changed `propagate()` from LIFO pop (`--stacksize`) to FIFO queue discipline with a local `head` index.
+- `ban()` remained unchanged and still appended derived bans at `stacksize`.
+- After `head` caught `stacksize`, reset `this.stacksize = 0` to preserve the empty-stack postcondition.
+- Direction order and support-count semantics were unchanged.
+
+Gates:
+
+```text
+bun run typecheck
+PASS
+
+bun run harness/prove-harness.ts
+FINAL: PASS — harness proven against identity copy (gate: valid + deterministic)
+```
+
+Measurement:
+
+```text
+bun run harness/measure-speedup.ts knots-standard-48 5
+SPEEDUP knots-standard-48 (median-of-5): ref 12.048ms | opt 1.068ms | speedup 11.28x
+bun run harness/measure-speedup.ts circuit-turnless-34 5
+SPEEDUP circuit-turnless-34 (median-of-5): ref 7.208ms | opt 2.849ms | speedup 2.53x
+bun run harness/measure-speedup.ts rooms-30 5
+SPEEDUP rooms-30 (median-of-5): ref 3.525ms | opt 1.283ms | speedup 2.75x
+
+rerun:
+SPEEDUP knots-standard-48 (median-of-5): ref 12.240ms | opt 1.248ms | speedup 9.81x
+SPEEDUP circuit-turnless-34 (median-of-5): ref 7.335ms | opt 3.116ms | speedup 2.35x
+SPEEDUP rooms-30 (median-of-5): ref 3.731ms | opt 1.300ms | speedup 2.87x
+```
+
+Decision: REVERT. Correctness gates passed, but full-run speed regressed compared with the established Round-3 baseline (circuit ~2.77x, rooms ~3.22x, knots ~11.5x). As with H41, the single-propagation drain-only prototype signal did not survive full-solver measurement. The local FIFO queue likely changes collapse/progression/cache behavior across the full run and adds head/tail access shape that costs more than the isolated drain win.
+
+Learning: all Round 4 planned CPU loop-rethinking candidates have now been measured. H37/H38 changed the propagation formulation/unit and lost; H39 found a non-shippable eval-generated drain win; H41/H42 failed to promote the promising micro-signals into full-run speed. Next step should be an explicit STALL→IDEATE pass before deciding to stop: look for genuinely new CPU mechanisms beyond (a) dirty-cell bitsets, (b) cell-batched AC-4, (c) generated/static propagation specialization, and (d) FIFO/order changes.
