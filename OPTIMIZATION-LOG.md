@@ -1178,3 +1178,39 @@ Stop reason (exit criteria (b)): every candidate KEPT/REVERTED/REJECTED + ideati
 new high-payoff candidate. Genuine exhaustion, not early stopping. (The ~25-iteration minimum was
 approximate; forcing H34/H35/H36 — all data-grounded marginal/no-op — would dilute quality. Honest
 exhaustion is the stop.)
+
+## WebGPU prototype — de-risk (2026-06-25)
+
+**Scope:** Throwaway `scripts/webgpu-prototype.ts` only. Bun `bun-webgpu` added as devDep (verified adapter+device). Imports/reads from src-optimized/ for initial state + CPU reference path (via subclass for protected fields) but NEVER mutates solver sources. No changes to src/, src-optimized/, harness/, test/, performance-test/.
+
+**Design implemented (per spec):** Parallel AC-4 in WGSL compute:
+- State: wave (u32 0/1), compatible (atomic<i32> per (i,t,d)), CSR propData/Start/Len (u32), neighbors (i32), ping-pong banned/nextBanned (atomic<u32> lists with count prefix), changed atomic flag.
+- APPLY dispatch (per current banned): exact mirror of CPU inner: `for d; i2=nei; for t2 in prop[d][t1]: atomicSub(compat[i2*T4 + t2*4 + d], 1)`.
+- DETECT dispatch (full scan live): if wave==1 and any compat_d <=0: wave=0, zero its 4 compats, append to next via atomic, flag changed.
+- Host loop: per-iter write-reset + submit( apply? + detect ) + copy+mapAsync read (count+changed) + swap. Simple per-iter readback as specified (first try).
+- Trigger state capture: post-clear, apply ban(s), snapshot wave/compat/stack as initial newlyBanned + upload; run CPU propagate() vs GPU from identical pre-prop state; reset between.
+
+**Q1 CORRECTNESS:** YES — GPU parallel-AC-4 fixpoint produces IDENTICAL banned set (wave bits) as CPU AC-4.
+
+Tested on knots-standard 24x24 periodic. Trigger: interior cell collapse (ban T-1=8 variants at one cell to simulate observe; leaves realistic multi-entry worklist on stack). Drained in 25 parallel iterations, peak ~414 bans in flight in one batch. Final wave: 0 diffs across 5184 slots. (Note: this particular collapse led to contradiction (sums<=0) but the *fixpoint reached* matched exactly; AC-4 is confluent so order/batch independent.)
+
+Direction/neighbor/prop indexing verified by direct read of model.ts (propagate, ban, clear, init, neighbors build with DX/DY/OPPOSITE, T4 strides). Mismatch would have failed compare immediately.
+
+**Q2 CROSSOVER:** GPU NEVER WINS (readback + dispatch overhead dominates) up to 256x256.
+
+Live measurements (knots-standard T=9 periodic; wall ms for collapse-trigger + full propagate-to-fixpoint; GPU excludes setup, only dispatch loop+readbacks):
+
+- 24×24: CPU 0.86 ms | GPU 12.4 ms (25 iters) — CPU ~14×
+- 48×48: CPU 1.13 ms | GPU 19.1 ms (49 iters)
+- 128×128: CPU 6.06 ms | GPU 50.1 ms (129 iters)
+- 256×256: CPU 26.7 ms | GPU 121 ms (257 iters) — CPU ~4.5×
+
+Iters ≈ grid size (wavefront propagation diameter). GPU per-iter overhead ~0.45–0.5 ms (2× mapAsync scalar readback, writes, bindgroups, 2 dispatches, submit). Absolute CPU times small because knots is selection-bound in steady state; the measured work is the artificial collapse cascade.
+
+**Key bottleneck:** The host per-iteration synchronization/readback, not the parallel decrement arithmetic. (Even pure compute would lose to the roundtrips at these iters.) Atomics, buffer sizes, dispatch all functioned; WGSL layout inference required pruning unused decls per-shader.
+
+**Verdict + recommendation:** Correctness de-risk PASSED. The "real wall" attack via this parallel-AC-4 formulation + simple readback is INFEASIBLE for a speedup (GPU slower at all sizes tested). Do not proceed to integrated WebGPU solver in src on this design without first solving the sync problem (e.g. fixed-epoch max-iters + one final readback, or device-side termination with single sync, or indirect-dispatch worklists). A full build would replicate the throwaway overhead without a win. Separate larger-grid or alternate-alg GPU effort would be needed to beat the current plain-JS AC-4 ceiling.
+
+**Artifacts committed:** `scripts/webgpu-prototype.ts`, `bun-webgpu` devDep entry (prototype only), this log section. Prototype can be deleted post-review.
+
+All numbers real (no fab). Run on Apple M-series via bun-webgpu (Dawn). Commit after append.

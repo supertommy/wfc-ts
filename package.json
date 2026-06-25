@@ -23,6 +23,7 @@
     "@types/bun": "^1.2.0",
     "@zakkster/lite-wfc": "^1.1.0",
     "blazinwfc": "^1.0.13",
+    "bun-webgpu": "^0.1.7",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0",
     "wavefunctioncollapse": "^2.1.0"
