@@ -110,6 +110,7 @@ Post-discussion continuation:
 - Result: correct/deterministic on `circuit-turnless-8`, but slow (`15.0ms` cold / `7.7ms` repeat vs JS `2.1ms`, ~0.14x) and barrier-fragile. `circuit-16` and `knots-8` exceeded the safety timeout during probing.
 - Important learning: a persistent spin-barrier can prove device-side convergence, but it is not the performant WebGPU path as implemented. Avoid spin-barrier mega-kernels for the shippable solver. If GPU research continues, pivot to no-spin designs: indirect/chunked command sequences with bounded sync, or scan/compact/fixed-epoch frontier formulations.
 - User wants the next GPU work to continue as a **ratchet loop**, not a one-off hand-coded branch. Use the Mike Acton loop shape again: one hypothesis per iteration, script-local prototype first, real measurement, keep/revert, log every result, commit kept/research checkpoints. Do not touch the shippable JS solver or public exports until a GPU path proves VALID+DET and a real crossover.
+- GPU ratchet iteration 1 added `scripts/bench-gpu-crossover-gate.ts`. Baseline current hybrid on `circuit-turnless-128`: JS `57.4ms`, GPU `23599.6ms`, VALID PASS, DET PASS, `0.002x`; boundary counts for one GPU run were `135970` writeBuffer calls, `136717` submits, `24381` mapAsync readbacks. This is now the standard gate for future GPU candidates.
 
 ## Open-source finish (after GPU research pauses/concludes)
 
@@ -148,11 +149,12 @@ Hard stop criteria for the GPU ratchet:
 5. `src-optimized/webgpu/gpu-runner.ts` — Stage 2 hybrid full-run runner (correct but too slow).
 6. `scripts/debug-gpu-lockstep.ts` — current CPU/GPU lockstep debugger; propagation/sums PASS.
 7. `scripts/webgpu-boundary-probe.ts` — latest boundary-crossing feasibility probe.
-8. `scripts/webgpu-prototype-v2.ts` — single-propagation large-grid crossover prototype.
-9. KB: `/Users/tommy/Documents/projects/superhq/tommyato-knowledge/investigations/gpu-frontier-data-structures-for-wfc.md`.
-10. `prompts/optimize-one.md` — CPU ratchet methodology if needed.
-11. `HARNESS-BASELINE.md` — the gate contract (valid+det; compare informational).
-12. `benchmarks/external/RESULTS.md` — external comparison (needs post-Round-3 refresh before release).
+8. `scripts/bench-gpu-crossover-gate.ts` — standard large-grid VALID+DET+boundary-count gate for GPU ratchet candidates.
+9. `scripts/webgpu-prototype-v2.ts` — single-propagation large-grid crossover prototype.
+10. KB: `/Users/tommy/Documents/projects/superhq/tommyato-knowledge/investigations/gpu-frontier-data-structures-for-wfc.md`.
+11. `prompts/optimize-one.md` — CPU ratchet methodology if needed.
+12. `HARNESS-BASELINE.md` — the gate contract (valid+det; compare informational).
+13. `benchmarks/external/RESULTS.md` — external comparison (needs post-Round-3 refresh before release).
 
 ## Match contract (the gate)
 

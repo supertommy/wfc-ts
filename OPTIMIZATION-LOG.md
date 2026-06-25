@@ -1478,3 +1478,34 @@ Additional probes during development:
 - The all-invocation barrier variant deadlocked on real work. The earlier `webgpu-boundary-probe.ts` barrier only proved small synthetic rounds, not a production persistent kernel with all lanes spinning.
 
 **Verdict:** device-side fixpoint convergence can be correct — the persistent kernel produced a valid deterministic full solve with one final readback — but this WebGPU barrier approach is not the performance path. The overhead/fragility is worse than the optimized JS solver even on tiny grids, and it times out before reaching useful sizes. Next GPU direction, if any, should avoid spin barriers entirely: either command-encoded indirect/chunked work with bounded host sync, or a scan/compact formulation that tolerates fixed epochs without global barriers. The shippable library path remains the optimized JS solver plus the correct-but-slow optional propagation backend.
+
+### GPU ratchet iteration 1 — large-grid crossover gate
+
+Hypothesis: before testing more GPU algorithms, build a reusable large-grid gate so every candidate is judged on the same bar: optimized JS vs GPU wall time, VALID, DET, and concrete CPU/GPU boundary crossings. This prevents optimizing blind.
+
+Added `scripts/bench-gpu-crossover-gate.ts`:
+- Default case: `circuit-turnless-128`, periodic, fixed seed.
+- Candidate interface for future prototypes.
+- Baseline candidate: existing Stage 2 `GpuWfcRunner` (CPU observe + GPU propagate).
+- Independent adjacency validator.
+- Determinism check: candidate run twice, compare observed output.
+- Boundary instrumentation around WebGPU calls: `queue.writeBuffer`, `queue.submit`, and `GPUBuffer.mapAsync`.
+
+Verification:
+
+```text
+bun run typecheck
+PASS
+
+bun run scripts/bench-gpu-crossover-gate.ts
+=== WEBGPU LARGE-GRID CROSSOVER GATE ===
+cases: circuit-turnless sizes=128 periodic=true
+candidate                         | size | JS ms   | GPU ms   | speedup | valid | det  | observes | writeBuffer | submit | mapAsync
+----------------------------------|------|---------|----------|---------|-------|------|----------|-------------|--------|---------
+stage2-hybrid-cpu-observe-gpu-prop |  128 |    57.4 |  23599.6 |   0.002x | PASS | PASS |    11816 |      135970 | 136717 |   24381
+  boundary: writeBufferBytes=12848176 submittedCommandBuffers=136717
+```
+
+Verdict: the current hybrid remains correct but is an anti-crossover baseline: ~411x slower than optimized JS on circuit-128. The exact instrumentation confirms the problem is not shader arithmetic; it is boundary frequency: 135,970 `writeBuffer` calls, 136,717 queue submits, and 24,381 `mapAsync` readbacks for one full run. Future candidates must collapse these by orders of magnitude before deeper kernel optimization matters.
+
+Next ratchet hypothesis: chunked fixed-epoch no-spin propagation. Test whether batching K propagation dispatches between count readbacks reduces `mapAsync` and submit pressure while preserving VALID+DET. Start from the current hybrid path and ratchet `sampleEvery`/epoch size under this new gate.
