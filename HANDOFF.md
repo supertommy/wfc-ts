@@ -80,17 +80,18 @@ Latest post-compact progress:
 - Added `scripts/debug-gpu-lockstep.ts` and logged it in `OPTIMIZATION-LOG.md`.
 - It compares CPU vs GPU after every observe+propagate: full `wave`, full `sumsOfOnes`, and live-slot `compatible`.
 - Deterministic lowest-t lockstep PASS on circuit 8/16 and knots 8/16.
+- Parallel MRV `atomicMin` select + lowest-t observe PASS on circuit-16 and knots-16.
 - Forced-random lockstep PASS on circuit-16 seed0 and knots-16 seeds 0/12345.
-- Key finding: chained atomic-append AC-4 frontier propagation + sums are correct for full small-grid solves when observes are deterministic or CPU-forced. Atomic append is **not currently the proven fault**.
+- Key finding: chained atomic-append AC-4 frontier propagation + sums are correct for full small-grid solves when observes are deterministic, parallel-selected, or CPU-forced random. Atomic append and parallel MRV selection are **not currently the proven fault**.
 - Lifecycle fact: after a cascade drains, the active/current frontier count is 0 but the inactive ping-pong buffer often has stale nonzero count. That is safe only if every observe phase resets/seeds a known buffer and starts from the matching parity.
 
 Recommended next technical step:
 1. Rebuild a **minimal persistent/chunked prototype** from the passing lockstep kernels, not from the deleted throwaway.
 2. Keep a readback/debug mode until it matches step-by-step.
 3. Add one GPU-owned feature at a time:
-   - parallel MRV select / done flag,
    - GPU PRNG weighted pick,
    - unrolled chunked no-readback execution.
+   Parallel MRV `atomicMin` select already passes in the debugger; only revisit if the persistent version diverges.
 4. Try to reproduce Stage 3 invalidity with the new infrastructure. If reproduced, compare the first divergent step.
 5. Only switch to scan/compact if a real atomic-append frontier lifecycle bug is proven.
 

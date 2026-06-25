@@ -210,6 +210,98 @@ fn main() {
 }
 `;
 
+const RESET_BEST_WGSL = `
+@group(0) @binding(0) var<storage, read_write> best: array<atomic<u32>>;
+
+@compute @workgroup_size(1)
+fn main() {
+  atomicStore(&best[0], 0xffffffffu);
+}
+`;
+
+const PARALLEL_SELECT_WGSL = `
+@group(0) @binding(0) var<storage, read> sums: array<u32>;
+@group(0) @binding(1) var<storage, read_write> best: array<atomic<u32>>;
+@group(0) @binding(2) var<uniform> params: vec4<u32>; // [T, T4, count, 0]
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i: u32 = gid.x;
+  let count: u32 = params[2];
+  if (i >= count) { return; }
+  let s: u32 = sums[i];
+  if (s > 1u) {
+    // count in this debug probe is far below 2^20; pack priority then cell.
+    let packed: u32 = (s << 20u) | i;
+    atomicMin(&best[0], packed);
+  }
+}
+`;
+
+const OBSERVE_SELECTED_LOWEST_WGSL = `
+@group(0) @binding(0) var<storage, read_write> wave: array<atomic<u32>>;
+@group(0) @binding(1) var<storage, read_write> compatible: array<atomic<i32>>;
+@group(0) @binding(2) var<storage, read_write> sums: array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read_write> work: array<atomic<u32>>;
+@group(0) @binding(4) var<storage, read_write> debug: array<atomic<u32>>;
+@group(0) @binding(5) var<uniform> params: vec4<u32>; // [T, T4, count, 0]
+@group(0) @binding(6) var<storage, read> best: array<u32>;
+
+@compute @workgroup_size(1)
+fn main() {
+  let T: u32 = params[0];
+  let T4: u32 = params[1];
+  let packed: u32 = best[0];
+
+  atomicStore(&work[0], 0u);
+  atomicStore(&debug[0], 0u);
+  atomicStore(&debug[1], 0xffffffffu);
+  atomicStore(&debug[2], 0xffffffffu);
+  atomicStore(&debug[3], 0u);
+
+  if (packed == 0xffffffffu) {
+    return;
+  }
+
+  let cell: u32 = packed & 0x000fffffu;
+  let base: u32 = cell * T;
+  var kept: u32 = 0xffffffffu;
+  for (var t: u32 = 0u; t < T; t = t + 1u) {
+    if (atomicLoad(&wave[base + t]) == 1u) {
+      kept = t;
+      break;
+    }
+  }
+  if (kept == 0xffffffffu) {
+    return;
+  }
+
+  var seedBans: u32 = 0u;
+  for (var t: u32 = 0u; t < T; t = t + 1u) {
+    if (t == kept) { continue; }
+    let waddr: u32 = base + t;
+    if (atomicLoad(&wave[waddr]) == 1u) {
+      atomicStore(&wave[waddr], 0u);
+      let cbase: u32 = cell * T4 + t * 4u;
+      atomicStore(&compatible[cbase + 0u], 0i);
+      atomicStore(&compatible[cbase + 1u], 0i);
+      atomicStore(&compatible[cbase + 2u], 0i);
+      atomicStore(&compatible[cbase + 3u], 0i);
+      atomicSub(&sums[cell], 1u);
+      let pos: u32 = atomicAdd(&work[0], 1u);
+      atomicStore(&work[1u + pos * 2u], cell);
+      atomicStore(&work[1u + pos * 2u + 1u], t);
+      seedBans = seedBans + 1u;
+    }
+  }
+
+  atomicStore(&debug[0], 1u);
+  atomicStore(&debug[1], cell);
+  atomicStore(&debug[2], kept);
+  atomicStore(&debug[3], seedBans);
+}
+`;
+
 const PROPAGATE_WGSL = `
 @group(0) @binding(0) var<storage, read_write> wave: array<atomic<u32>>;
 @group(0) @binding(1) var<storage, read_write> compatible: array<atomic<i32>>;
@@ -342,6 +434,9 @@ class DebugGpuState {
   private readonly workBufSize: number;
 
   private readonly selectPipeline: GPUComputePipeline;
+  private readonly resetBestPipeline: GPUComputePipeline;
+  private readonly parallelSelectPipeline: GPUComputePipeline;
+  private readonly observeSelectedPipeline: GPUComputePipeline;
   private readonly forcedPipeline: GPUComputePipeline;
   private readonly propPipeline: GPUComputePipeline;
   private readonly waveBuf: GPUBuffer;
@@ -354,6 +449,7 @@ class DebugGpuState {
   private readonly neighborsBuf: GPUBuffer;
   private readonly paramsBuf: GPUBuffer;
   private readonly observeParamsBuf: GPUBuffer;
+  private readonly bestBuf: GPUBuffer;
   private readonly debugBuf: GPUBuffer;
 
   private readonly waveRead: GPUBuffer;
@@ -397,7 +493,9 @@ class DebugGpuState {
 
     this.workA = device.createBuffer({ size: this.workBufSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     this.workB = device.createBuffer({ size: this.workBufSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    this.bestBuf = device.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.debugBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(this.bestBuf, 0, new Uint32Array([0xffffffff]));
     device.queue.writeBuffer(this.workA, 0, new Uint32Array([0]));
     device.queue.writeBuffer(this.workB, 0, new Uint32Array([0]));
     device.queue.writeBuffer(this.debugBuf, 0, new Uint32Array(4));
@@ -411,6 +509,18 @@ class DebugGpuState {
     this.selectPipeline = device.createComputePipeline({
       layout: "auto",
       compute: { module: device.createShaderModule({ code: SELECT_OBSERVE_WGSL }), entryPoint: "main" },
+    });
+    this.resetBestPipeline = device.createComputePipeline({
+      layout: "auto",
+      compute: { module: device.createShaderModule({ code: RESET_BEST_WGSL }), entryPoint: "main" },
+    });
+    this.parallelSelectPipeline = device.createComputePipeline({
+      layout: "auto",
+      compute: { module: device.createShaderModule({ code: PARALLEL_SELECT_WGSL }), entryPoint: "main" },
+    });
+    this.observeSelectedPipeline = device.createComputePipeline({
+      layout: "auto",
+      compute: { module: device.createShaderModule({ code: OBSERVE_SELECTED_LOWEST_WGSL }), entryPoint: "main" },
     });
     this.forcedPipeline = device.createComputePipeline({
       layout: "auto",
@@ -444,6 +554,73 @@ class DebugGpuState {
     passObserve.setBindGroup(0, observeBind);
     passObserve.dispatchWorkgroups(1);
     passObserve.end();
+    this.device.queue.submit([encObserve.finish()]);
+
+    const debug = await this.readDebug();
+    if (debug[0] === 0) {
+      return { status: "complete", cell: -1, kept: -1, seedBans: 0, finalFrontierCount: 0, frontierCounts: [] };
+    }
+
+    const drained = await this.drainFrontier();
+    return {
+      status: "observe",
+      cell: debug[1] | 0,
+      kept: debug[2] | 0,
+      seedBans: debug[3] | 0,
+      finalFrontierCount: drained.finalFrontierCount,
+      frontierCounts: drained.frontierCounts,
+    };
+  }
+
+  async stepParallelSelectLowest(): Promise<GpuStep> {
+    this.device.queue.writeBuffer(this.workA, 0, new Uint32Array([0]));
+    this.device.queue.writeBuffer(this.workB, 0, new Uint32Array([0]));
+    this.device.queue.writeBuffer(this.debugBuf, 0, new Uint32Array(4));
+
+    const encSelect = this.device.createCommandEncoder();
+    const resetBind = this.device.createBindGroup({
+      layout: this.resetBestPipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: this.bestBuf } }],
+    });
+    const resetPass = encSelect.beginComputePass();
+    resetPass.setPipeline(this.resetBestPipeline);
+    resetPass.setBindGroup(0, resetBind);
+    resetPass.dispatchWorkgroups(1);
+    resetPass.end();
+
+    const selectBind = this.device.createBindGroup({
+      layout: this.parallelSelectPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.sumsBuf } },
+        { binding: 1, resource: { buffer: this.bestBuf } },
+        { binding: 2, resource: { buffer: this.paramsBuf } },
+      ],
+    });
+    const selectPass = encSelect.beginComputePass();
+    selectPass.setPipeline(this.parallelSelectPipeline);
+    selectPass.setBindGroup(0, selectBind);
+    selectPass.dispatchWorkgroups(Math.ceil(this.count / 64));
+    selectPass.end();
+    this.device.queue.submit([encSelect.finish()]);
+
+    const encObserve = this.device.createCommandEncoder();
+    const observeBind = this.device.createBindGroup({
+      layout: this.observeSelectedPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.waveBuf } },
+        { binding: 1, resource: { buffer: this.compatBuf } },
+        { binding: 2, resource: { buffer: this.sumsBuf } },
+        { binding: 3, resource: { buffer: this.workA } },
+        { binding: 4, resource: { buffer: this.debugBuf } },
+        { binding: 5, resource: { buffer: this.paramsBuf } },
+        { binding: 6, resource: { buffer: this.bestBuf } },
+      ],
+    });
+    const observePass = encObserve.beginComputePass();
+    observePass.setPipeline(this.observeSelectedPipeline);
+    observePass.setBindGroup(0, observeBind);
+    observePass.dispatchWorkgroups(1);
+    observePass.end();
     this.device.queue.submit([encObserve.finish()]);
 
     const debug = await this.readDebug();
@@ -726,6 +903,58 @@ async function runCase(device: GPUDevice, tileset: Tileset, subsetName: string, 
   return true;
 }
 
+async function runCaseParallelSelect(device: GPUDevice, tileset: Tileset, subsetName: string, size: number, maxSteps: number): Promise<boolean> {
+  const label = `${tileset.name}-${subsetName}-${size}-parallel-select-lowest`;
+  console.log(`\n=== LOCKSTEP ${label} ===`);
+  const cpu = new Exposed({ tileset, subsetName, width: size, height: size, periodic: true, heuristic: Heuristic.MRV });
+  if (cpu.count_ === 0) cpu.init_();
+  cpu.clear_();
+  const gpu = new DebugGpuState(device, cpu);
+
+  for (let step = 1; step <= maxSteps; step++) {
+    const cpuStep = runCpuStep(cpu);
+    const gpuStep = await gpu.stepParallelSelectLowest();
+    const snap = await gpu.snapshot();
+    const diff = compare(cpu, snap);
+
+    const selectionMismatch = cpuStep.status !== gpuStep.status || cpuStep.cell !== gpuStep.cell || cpuStep.kept !== gpuStep.kept || cpuStep.seedBans !== gpuStep.seedBans;
+    const stateMismatch = diff.waveDiffs > 0 || diff.sumsDiffs > 0 || diff.liveCompatDiffs > 0;
+    const notDrained = gpuStep.finalFrontierCount !== 0;
+
+    if (step <= 5 || selectionMismatch || stateMismatch || notDrained || cpuStep.status !== "observe") {
+      console.log(
+        `step=${step} cpu=${cpuStep.status}(${cpuStep.cell}, keep=${cpuStep.kept}, bans=${cpuStep.seedBans}) ` +
+        `gpu=${gpuStep.status}(${gpuStep.cell}, keep=${gpuStep.kept}, bans=${gpuStep.seedBans}) ` +
+        `frontier=${gpuStep.frontierCounts.join("->") || "-"} ` +
+        `diffs wave=${diff.waveDiffs} sums=${diff.sumsDiffs} liveCompat=${diff.liveCompatDiffs} ` +
+        `workA=${snap.workA} workB=${snap.workB}`
+      );
+    }
+
+    if (selectionMismatch || stateMismatch || notDrained) {
+      console.error(`\nDIVERGENCE in ${label} at step ${step}`);
+      if (selectionMismatch) console.error(`selection mismatch: CPU ${JSON.stringify(cpuStep)} GPU ${JSON.stringify(gpuStep)}`);
+      if (diff.waveDiffs > 0) console.error(`first wave diff: ${describeWaveIndex(cpu, diff.firstWaveDiff)} gpu=${snap.wave[diff.firstWaveDiff]}`);
+      if (diff.sumsDiffs > 0) console.error(`first sums diff: ${describeSumsIndex(cpu, snap, diff.firstSumsDiff)}`);
+      if (diff.liveCompatDiffs > 0) console.error(`first live compatible diff: ${describeCompatIndex(cpu, snap, diff.firstLiveCompatDiff)}`);
+      if (notDrained) console.error(`propagation did not drain within diameter; final frontier=${gpuStep.finalFrontierCount}`);
+      return false;
+    }
+
+    if (cpuStep.status === "complete") {
+      console.log(`PASS ${label}: completed in ${step - 1} observes with no divergence.`);
+      return true;
+    }
+    if (cpuStep.status === "contradiction") {
+      console.log(`PASS ${label}: CPU contradiction matched state through step ${step}; stopping debug case.`);
+      return true;
+    }
+  }
+
+  console.log(`PASS ${label}: no divergence through ${maxSteps} observes (case still incomplete).`);
+  return true;
+}
+
 async function runCaseForcedRandom(
   device: GPUDevice,
   tileset: Tileset,
@@ -817,6 +1046,18 @@ async function main(): Promise<void> {
     const ok = await runCase(device, tileset, subset, size, maxSteps);
     allPass = allPass && ok;
     if (!ok) break;
+  }
+
+  if (allPass) {
+    const parallelCases: Array<[Tileset, string, number, number]> = [
+      [circuit, "Turnless", 16, 512],
+      [knots, "Standard", 16, 512],
+    ];
+    for (const [tileset, subset, size, maxSteps] of parallelCases) {
+      const ok = await runCaseParallelSelect(device, tileset, subset, size, maxSteps);
+      allPass = allPass && ok;
+      if (!ok) break;
+    }
   }
 
   if (allPass) {

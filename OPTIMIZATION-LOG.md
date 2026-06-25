@@ -1373,6 +1373,7 @@ All numbers from actual runs captured in session. Script left (then cleaned) per
 - After every observe+propagate step, read back and compare: full `wave`, full `sumsOfOnes`, and compatible counts only on live tile slots (dead slots are not semantic and may differ by CPU duplicate pushes / narrow wrap vs GPU CAS-claim).
 - Mode A: GPU selects deterministic MRV lowest-sum / lowest-cell and keeps lowest live tile.
 - Mode B: CPU chooses a random live tile with `mulberry32` + unit weightedPick and forces that exact `(cell, keptTile)` into the GPU observe kernel; GPU still owns observe bans + propagation + sums.
+- Mode C: Stage-3-shaped parallel MRV selection with `atomicMin((sumsOfOnes << 20) | cell)` and lowest-live-t observe.
 
 **Commands run:**
 ```bash
@@ -1393,10 +1394,29 @@ bun run scripts/debug-gpu-lockstep.ts
 
 **Important lifecycle observation:** when a cascade drains, the *current* frontier count is zero, but the inactive ping-pong buffer often still has a stale nonzero count (for example Knots step 1 leaves `workA=0 workB=18`; Circuit often leaves the opposite parity stale). This is correct only if every observe phase resets/seeds a known buffer and starts propagation from the matching parity. Any persistent/chunked prototype that carries parity across observes or reads the inactive buffer count can replay stale bans or skip new bans.
 
-**Narrowed verdict:** chained GPU AC-4 propagation, `sumsOfOnes` maintenance, and live-compatible support counts are correct across full small-grid solves when observes are either deterministic or CPU-forced random. The remaining likely fault in the deleted Stage 3 prototype is **not** the fused frontier kernel itself; it is in one of:
+**Narrowed verdict:** chained GPU AC-4 propagation, `sumsOfOnes` maintenance, live-compatible support counts, and parallel MRV `atomicMin` selection are correct across full small-grid solves when observes are deterministic, parallel-selected, or CPU-forced random. The remaining likely fault in the deleted Stage 3 prototype is **not** the fused frontier kernel itself; it is in one of:
 1. GPU-side weighted-pick / PRNG observe kernel (different or invalid kept tile selection is okay, but a bug that keeps a non-live tile or miscomputes seed bans is not),
-2. parallel MRV selection / done-flag lifecycle,
-3. persistent/chunked ping-pong parity/reset lifecycle across observes (especially stale inactive worklist counts), or
+2. persistent/chunked ping-pong parity/reset lifecycle across observes (especially stale inactive worklist counts),
+3. done-flag / command-order lifecycle in the no-readback unrolled prototype, or
 4. validation/reporting bug in the throwaway prototype.
 
-**Next if continuing GPU:** rebuild a minimal persistent/chunked prototype from this passing lockstep kernel, but keep the readbackable per-step debug path until it matches. First reproduce Stage 3 invalidity with the new script infrastructure; then add one GPU-owned feature at a time: parallel select, GPU PRNG weighted pick, then chunked no-readback execution. Do not rewrite propagation to scan/compact yet; atomic append is not currently the proven fault.
+**Next if continuing GPU:** rebuild a minimal persistent/chunked prototype from this passing lockstep kernel, but keep the readbackable per-step debug path until it matches. First reproduce Stage 3 invalidity with the new script infrastructure; then add one GPU-owned feature at a time: GPU PRNG weighted pick, then chunked no-readback execution. Do not rewrite propagation to scan/compact yet; atomic append and parallel MRV selection are not currently the proven fault.
+
+### Lockstep debugger extension — parallel MRV select isolated
+
+Extended `scripts/debug-gpu-lockstep.ts` with a Stage-3-shaped parallel MRV selection path:
+- `resetBest` kernel initializes packed best to `0xffffffff`.
+- `parallelSelect` scans cells in parallel and `atomicMin`s `(sumsOfOnes << 20) | cell`.
+- `observeSelectedLowest` reads the selected cell, keeps lowest live tile, seeds worklist, and uses the same propagation drain.
+
+**Commands run:**
+```bash
+bun run typecheck
+bun run scripts/debug-gpu-lockstep.ts
+```
+
+**Additional results:**
+- circuit-turnless-16 parallel-select-lowest: completed 31 observes, 0 wave/sums/live-compatible diffs.
+- knots-standard-16 parallel-select-lowest: completed 227 observes, 0 diffs.
+
+**Narrowing update:** parallel MRV selection via `atomicMin` is also not the Stage 3 fault, at least for the lowest-t observe sequence. Remaining suspects are now primarily (a) GPU PRNG/weighted-pick observe, or (b) no-readback chunked/persistent lifecycle (done flag, parity/reset, command order), not the AC-4 frontier propagation or atomicMin MRV selection by themselves.
