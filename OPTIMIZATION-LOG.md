@@ -439,3 +439,63 @@ New candidates (IDEATION):
   the wall via cache, not algorithm.
 
 Next: implement H23 (highest payoff + lowest risk), then H22.
+
+## Hypothesis 23 — compatible Int32→Uint8 (cache-speed win on the propagation wall) [KEPT]
+
+**Hypothesis:** The propagation decrement loop (`--compatible[cidx]; if (===0) ban`) is the
+60-66% cost on circuit/rooms (the wall post H4/H6/H10). H5/H8/H15 attacked it
+algorithmically and all REVERTED. H23 attacks via CACHE: `compatible` is Int32Array
+(4B/entry); counts bounded by prop list len ≤T. For our tilesets T<256 (knots9,
+circuit36, rooms28) every count fits in Uint8 (1B) EXACTLY — 4× smaller array →
+4× less cache pressure on the hot decrement loop → fewer misses → faster. Freshest
+angle (cache, not alg) and Tier-1 (same counts → same decrs → same bans → same seq →
+byte-identical outputs vs post-H12).
+
+**Underflow-safety (the one subtlety, gotten right):** `compatible[i][t][d]` init to
+`propLen[opposite(d)*T + t]` (≤T) and decr on compat-neighbor ban; 0→ban. ban(i,t)
+ZEROES the 4 dir slots for t (even those still >0). After, those slots can receive
+more decrs (later neighbor bans) → underflow. Int32 goes negative (harmless, !=0).
+Uint8 wraps 0→255→... . #post-ban decrs to a dead slot ≤ remaining-at-ban ≤ init ≤T.
+For T<256, post-ban ≤T<256 → wrap NEVER hits 0 again → no false re-ban. SAFE.
+General: AUTO-SELECT narrowest: maxPropLen = max(propLen); <256→Uint8, <65536→Uint16,
+else Int32. Exact, no saturation. For our inputs: Uint8.
+
+**Change:** Exactly *one* file `src-optimized/model.ts`. Added CompatibleCtor +
+compatibleBpe fields; updated compatible/compatible0 decls to union; in init():
+compute maxPropLen from propLen (set by subclass ctor before first run), pick ctor,
+`new this.CompatibleCtor(count*T4)` for live+ H10 snapshot; store choice. All access
+(`--`, `===0`, `=0`, `.set()`) work unchanged (JS typedarray elem ops yield number).
+footprintBytes sums .byteLength → auto smaller. Header + inline docs. No debug
+left in tree. No other files touched (per rules).
+
+**Gate + Measure (followed optimize-one.md):**
+- `npx tsc --noEmit` clean (strict) before/after.
+- `bun run harness/prove-harness.ts`: VALID+DET (viol=0) pre and post; DET re-runs match;
+  compare* FAIL unchanged from H4 (Tier-1 layout change after algorithmic H4).
+- SPEED (primary; `harness/measure-speedup.ts` median-of-5; before via `git stash` of
+  clean post-H12, after on H23; same machine):
+
+| input               | ref ms  | opt-before | opt-after | speedup-b | speedup-a | auto-type |
+|---------------------|---------|------------|-----------|-----------|-----------|-----------|
+| knots-standard-48   | ~10.7-11| 1.791 ms   | 1.728 ms  | 5.95x     | 6.38x     | Uint8 (maxPropLen=5) |
+| circuit-turnless-34 | ~7.2-7.3| 4.358 ms   | 4.037 ms  | 1.66x     | 1.81x     | Uint8 (14) |
+| rooms-30            | ~3.3-3.4| 1.965 ms   | 1.898 ms  | 1.68x     | 1.79x     | Uint8 (8) |
+
+- MEMORY (`harness/memory.ts`): pre→post: knots48 1148kB→651kB (-43%, -498kB exact
+  for compat*2); circuit 2019kB→1020kB; rooms 1238kB→633kB. Delta matches
+  2×C×T4×3 bytes saved (verified). Compatible slice 4× smaller as designed.
+- SUCCESS (no reg expected, Tier-1): `bun run harness/success-rate.ts knots-dense-24 50`
+  → 100% both before and after (unchanged).
+
+**Decision:** KEEP (committed). Meets *exact* keep criteria for Round 3 SPEED candidate:
+VALID+DET mandatory pass; knots-48 no regression (small gain); *real* above-noise
+speed gain on circuit (7.4%, 0.32ms) *and* rooms (3.4%) — the prop-wall targets.
+Memory win is bonus (spec says accept mem for speed). Auto-selected Uint8 for all
+committed tilesets. Byte-identical (Tier-1) as predicted — no wrap false-positive
+because of the T<256 bound + ban-zero semantics. First cache-layout attack on the wall.
+
+**Cost:** stash dance for paired before + 3×5 after + 2×prove + 2×success50 + mem +
+typecheck ×many + edit + log/readme + commit ~15min wall + harness runs.
+
+Next candidate recommended: H22 (MRV selection — eliminate the per-ban Math.log
+recompute that was the largest ban sub-cost in prior profiles).

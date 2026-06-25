@@ -45,7 +45,7 @@ informational. See `prompts/optimize-one.md`.
 | H8 | ban per-call overhead (sums updates + 4x compat zero + entropy + heap update/remove) for high ban volume | 2 (valid+det) | ban+heap (25-31% on circuit/rooms) | REVERTED | no above-noise gain (entropy subprof largest but Math.log defer net ~0 within var); see log |
 | H9 | eliminate dist[] materialization in observe (direct wave+weights scan for sum/pick, still O(T) but save stores) | 1 (byte-id) | observe (4%) | REJECTED | low-Amdahl sub-micro of the observe phase; H7 already showed observe O(T) reorders yield no measurable gain at T=9/36, so a strictly smaller observe tweak (saving a few stores) cannot net a win. Not worth an iteration. |
 | H10 | cache clear() fixpoint (prelim-action pruning): snapshot wave/compat/sums/ent/obs post-bans+initial-prop; restore .set() on reuse | 2 (valid+det) | speed (all; clear 8-12%) + success (N seeds) | KEPT | subprof clear 7.7-11% (0.26-0.46ms); medians opt: knots 1.993→1.799 / circ 4.896→4.479 / rooms 2.248→1.950 ms (5.51→5.93x /1.55→1.61x /1.55→1.71x); mem +426kB knots-48 (acceptable); success 95% unch; VALID+DET (compare* FAIL from H4); see log |
-| H11 | bitpacked wave (1 bit/pattern) + narrow compatible | 1 (byte-id) | memory | REJECTED | wave-bitpack HURTS hot-path access (bit ops vs byte reads) — rejected on SPEED grounds (speed > memory). The compatible-narrowing sub-part is split into H23 (a cache-SPEED win on the propagation wall, not just memory). |
+| H11 | bitpacked wave (1 bit/pattern) + narrow compatible | 1 (byte-id) | memory | REJECTED | wave-bitpack HURTS hot-path access (bit ops vs byte reads) — rejected on SPEED grounds (speed > memory). The compatible-narrowing sub-part landed as H23 (KEPT cache-SPEED win). |
 | H12 | restart-with-derived-seeds on contradiction (no undo stack) | 2 (valid+det; new contract: seed+budget) | success-rate | KEPT | 95%→100% on knots-dense-24 (N=100); deriveRestartSeed(base,k) pure mulberry-mix; speed flat (within noise) on knots-48/circuit/rooms; mem unchanged; VALID+DET (new contract); see log |
 | H13 | CDCL-style conflict learning across restarts (learn forbidden collapse-combos, forbid next restart) | 2 (valid+det) | success-rate (big swing) | REJECTED | STEP1: H12 already 100% + median att=0 on harder 48/64 cases (knots-dense-48/64, circuit-48); no target for CDCL (see log). Pivot to speed ideation on prop wall. |
 | H14 | one-step look-ahead selection (forward-checking-lite; pick collapse minimizing threatened cells) | 2 (valid+det) | success-rate | REJECTED | success axis already maxed — H12 gets 100% on committed AND harder/larger inputs (H13 stress investigation: knots-dense-48/64, circuit-48 all 100% first-try); no measurable target for a success candidate. |
@@ -55,9 +55,9 @@ informational. See `prompts/optimize-one.md`.
 | H18 | sparse live-set wave for restrictive tilesets (adaptive dense/sparse per tileset) | 1 (byte-id) | memory + speed | TODO | stretch; wins only when live ≪ T (circuit); bad for permissive (knots). |
 | H19 | arena recycling (reuse collapsed-cell wave space for active watch/undo buffers) | 2 | memory (bounded under backtracking) | REJECTED | no backtracking landed (H13 rejected; H12 is restart-based, no undo stack) → arena recycling has no target. |
 | H20 | multi-resolution / nested-doll WFC (coarsen 2x2→1 macro-cell, then refine) | 2 | memory + speed (huge grids) | TODO | stretch; needs macro-tileset preprocessing; changes outputs. |
-| H21 | WebGPU propagation acceleration (optional path; portable JS fallback mandatory) | 2 | speed | TODO | stretch; only if H22/H23/H25 don't reach the target. MUST keep plain-JS path working in Node+browser. |
+| H21 | WebGPU propagation acceleration (optional path; portable JS fallback mandatory) | 2 | speed | TODO | stretch; only if H22/H24/H25 don't reach the target. MUST keep plain-JS path working in Node+browser. |
 | H22 | MRV selection (sumsOfOnes) instead of entropy — eliminate the per-ban Math.log recompute entirely | 2 (valid+det) | speed (ban entropy cost ~8-12%) | TODO | IDEATION: H8 sub-profile showed entropy/plogp Math.log is the biggest ban sub-cost; H8 only tried deferring (failed). MRV removes it outright. Tradeoff: changes selection order (Tier-2); success covered by H12 restart. Buildable, low-risk. |
-| H23 | compatible Int32 → Uint8 (counts are ≤T<256 for our tilesets, exact — no cap) | 1 (byte-id) | speed (propagation decrement loop — the 60-66% wall, via 4x cache reduction) | TODO | IDEATION: the freshest angle — directly attacks the propagation wall via cache (4x smaller compatible → fewer cache misses on the decrement loop), which H5/H8/H15 (algorithmic) all missed. Exact for T<256 (knots 9/circuit 36/rooms 28); Uint16 fallback for larger T. Tier-1 (same counts → byte-id). Buildable, low-risk. DO NEXT. |
+| H23 | compatible Int32 → Uint8 (counts are ≤T<256 for our tilesets, exact — no cap) | 1 (byte-id) | speed (propagation decrement loop — the 60-66% wall, via 4x cache reduction) | KEPT | Uint8 (maxPropLen=5/14/8 for knots/circuit/rooms); knots 1.791→1.728ms (no reg), circuit 4.358→4.037ms (+7.4%), rooms 1.965→1.898ms (+3.4%); mem -498kB/-1.0MB/-604kB; VALID+DET (byte-id); Tier-1 cache win on wall. See log. |
 | H24 | fast-log bitcast approximation (replace Math.log with bitcast log2 ~5-10x faster) | 2 (valid+det) | speed (ban entropy cost) | TODO | IDEATION alternative to H22 if entropy selection is worth keeping — entropy only needs monotonic order for the heap, so a fast approx preserves it closely. Tier-2 (slight order drift). |
 | H25 | spatially-biased selection (among min-entropy cells, pick nearest last-collapsed) | 2 (valid+det) | speed (propagation cache locality) | TODO | IDEATION/biomimicry (crystal nucleation): the heap scatters picks globally → propagation ripples back and forth; spatial bias gives the compatible/wave arrays better cache locality. Touches the wall via cache, not algorithm. Stretch; measure. |
 
@@ -179,11 +179,11 @@ is REVERTED. A speed win that costs memory is KEPT.
 2. H15 watched-literal propagation — REVERTED (list overhead > AC-4 savings).
 3. H12 restart-with-derived-seeds — KEPT (100% on dense+harder cases w/ ~0 retries); success axis MET. (H13 CDCL rejected: no target on harder cases.)
 4. H14/H17 success refinements — REJECTED (success axis maxed, no target).
-5. **H23 compatible→Uint8 — DO NEXT** (IDEATION: 4x cache reduction on the propagation decrement loop, the 60-66% wall; Tier-1, exact for T<256, low-risk).
+5. **H23 compatible→Uint8 — KEPT** (cache win: circuit +7%, rooms +3.4%, knots held; all Uint8; VALID+DET byte-id).
 6. **H22 MRV selection** (IDEATION: eliminate the per-ban Math.log, ~8-12% ban cost; Tier-2, low-risk).
 7. H24 fast-log approx / H25 spatial-biased selection — IDEATION alternatives (ban cost / cache locality).
 8. H16 steppable run loop — web-ecosystem robustness (needed for "best on web").
-9. H21 WebGPU — stretch speed path only if H23/H22/H25 don't reach the target.
+9. H21 WebGPU — stretch speed path only if H22/H24/H25 don't reach the target.
 10. Memory candidates (H18 sparse, H20 multi-res) — last; only if speed-neutral-or-better. (H11 wave-bitpack, H19 arena REJECTED: speed-cost / no-target.)
 
 **Round 3 target:** push circuit-turnless-34 and rooms-30 speedup vs reference
@@ -196,6 +196,12 @@ candidate. Minimum ~25 iterations or until exhausted.
 **Post-H13 (this iteration):** STEP1 stress (knots-dense-48/64, circuit-48, N=30-50) showed H12
 completes 100% with median attempts=0 (max=1). CDCL has no target. Per task instruction:
 REJECT without impl; pivot recommendation to SPEED ideation on propagation (the unmet axis).
+
+**Post-H23 (this iteration):** H23 (cache-narrow compatible) KEPT. All our tilesets auto-selected
+Uint8Array (maxPropLen 5/14/8 <<256). Speed: circuit 4.358→4.037ms (+7.4% on the wall),
+rooms +3.4%, knots no-reg (slight gain). Mem shrinks ~half for large inputs (compat+0 is
+now 1B/entry vs 4B). VALID+DET + byte-id (Tier-1). First cache-layout win on prop wall.
+Next candidate per README: H22 (MRV to kill per-ban log).
 
 ## Exit criteria (the orchestrator checks each loop turn)
 

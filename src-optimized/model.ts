@@ -75,6 +75,17 @@
 //   (target >=99% dense); speed must not regress (speed ranks above success).
 //   Tier-2; gate VALID+DET (re-runs with same default budget must match).
 //
+// HYPOTHESIS 23 (this iteration): compatible Int32→narrow (Uint8 for T<256) — cache-speed win on the propagation wall.
+//
+//   The `--compatible[cidx]; if (===0) ban` decrement loop is the 60-66% cost on
+//   circuit/rooms (the wall). H5/H8/H15 attacked algorithmically and REVERTED.
+//   H23 attacks via CACHE: counts ≤T; our tilesets T<256 → fits in Uint8 exactly.
+//   4× smaller compatible (+ its H10 snapshot) → 4× less cache pressure on hot loop
+//   → fewer misses → faster. AUTO-SELECT: max(propLen) <256?Uint8:<65536?Uint16:Int32.
+//   Store ctor+bpe. Underflow safe: ban zeros slots; post-ban decrs ≤T<256 never
+//   wrap 0→255... back to 0. Tier-1 (identical counts → byte-id outputs).
+//   footprintBytes sums .byteLength → auto reports the win.
+//
 // PRNG: mulberry32, same as the reference (deterministic contract).
 
 import { mulberry32, type Random } from "./prng.js";
@@ -108,7 +119,8 @@ export abstract class Model {
   protected propStart: Int32Array = new Int32Array(0);
   protected propLen: Int32Array = new Int32Array(0);
   // Flattened AC-4 support counts: compatible[i*T4 + t*4 + d]. Hits 0 => ban.
-  protected compatible: Int32Array = new Int32Array(0);
+  // H23: auto-narrowed (Uint8/16/Int32 chosen in init by maxPropLen); --/===0 identical.
+  protected compatible: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
   protected observed: Int32Array = new Int32Array(0);
 
   protected stackI: Int32Array = new Int32Array(0);
@@ -136,12 +148,18 @@ export abstract class Model {
   protected heapUpdateGen: Uint32Array = new Uint32Array(0);
   protected heapGen = 0;
 
+  // H23: chosen narrow ctor + bytes-per-element for compatible (and compatible0).
+  // Stored so we can new the matching type for snapshots and report if needed.
+  protected CompatibleCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
+  protected compatibleBpe = 4;
+
   // H10: cached post-clear fixpoint state (wave + compatible + sums + entropies + observed)
   // after boundary bans + initial propagate (the maximally-pruned start state for this
   // grid+tileset). Restored via .set() in clear(); captured once after first full clear.
   // Deterministic (seed-independent). Heap left to rebuild each clear.
   protected wave0: Uint8Array = new Uint8Array(0);
-  protected compatible0: Int32Array = new Int32Array(0);
+  // H23: same auto-narrowed type as the live compatible (chosen at init).
+  protected compatible0: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
   protected sumsOfOnes0: Int32Array = new Int32Array(0);
   protected sumsOfWeights0: Float64Array = new Float64Array(0);
   protected sumsOfWeightLogWeights0: Float64Array = new Float64Array(0);
@@ -170,9 +188,32 @@ export abstract class Model {
     this.count = count;
     this.T4 = T4;
 
+    // H23: auto-select narrowest safe integer array type for compatible counts.
+    // maxPropLen = longest propagator list (≤ T). <256 → Uint8 (our tilesets),
+    // <65536 → Uint16, else Int32. Post-ban underflow-wrap is safe: #post-ban
+    // decrs to a 0-slot ≤ T <256 → never reaches 0 again (unlike Int32 going neg).
+    // This shrinks the hot decrement array 4× → less cache pressure on prop wall.
+    {
+      let maxPropLen = 0;
+      for (let i = 0; i < this.propLen.length; i++) {
+        const v = this.propLen[i];
+        if (v > maxPropLen) maxPropLen = v;
+      }
+      if (maxPropLen < 256) {
+        this.CompatibleCtor = Uint8Array;
+        this.compatibleBpe = 1;
+      } else if (maxPropLen < 65536) {
+        this.CompatibleCtor = Uint16Array;
+        this.compatibleBpe = 2;
+      } else {
+        this.CompatibleCtor = Int32Array;
+        this.compatibleBpe = 4;
+      }
+    }
+
     // wave: all 1 (everything possible). compatible: filled by clear().
     this.wave = new Uint8Array(count * T); // zeroed; clear() sets the valid cells to 1
-    this.compatible = new Int32Array(count * T4);
+    this.compatible = new this.CompatibleCtor(count * T4);
     this.distribution = new Float64Array(T);
     this.observed = new Int32Array(count);
 
@@ -208,7 +249,7 @@ export abstract class Model {
 
     // H10 snapshot buffers (same size as live; populated at end of first clear)
     this.wave0 = new Uint8Array(count * T);
-    this.compatible0 = new Int32Array(count * T4);
+    this.compatible0 = new this.CompatibleCtor(count * T4);
     this.sumsOfOnes0 = new Int32Array(count);
     this.sumsOfWeights0 = new Float64Array(count);
     this.sumsOfWeightLogWeights0 = new Float64Array(count);
