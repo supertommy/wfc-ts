@@ -1285,3 +1285,46 @@ WFC propagation per observe is a *deep wavefront cascade* (depth = O(grid diamet
 All numbers real, captured from the run above (no fabrication). Ran 2026-06-25 on same Apple Silicon env as prior prototypes.
 
 Commit after append + `git status` check (only scripts/ touched).
+
+## Stage 2: hybrid full-run CPU-observe / GPU-propagate crossover (make-or-break) [Phase 4c]
+
+**Date:** 2026-06-25
+**Artifacts:** `src-optimized/webgpu/gpu-runner.ts`, `scripts/bench-gpu-fullrun.ts` (and minimal extension to `src-optimized/webgpu/propagate-gpu.ts` for incremental + cascade-stop + bannedLog accumulator; 8-storage fit by packing propMeta)
+
+**Target:** Does the single-propagate crossover (v2: GPU 2.5x@128 / 3.1x@256 on circuit) survive the *full* observe/propagate loop with per-observe CPU<->GPU traffic (seed uploads, count readbacks for early-stop, final log read O(banned), dispatches)? Honest measurement required; negative result is valid outcome.
+
+**Hybrid design as-built:**
+- CPU owns: sumsOfOnes (narrow), BucketPQ (H30, min-i tiebreak), mulberry32 PRNG, weightedPick, cpuWave mirror (Uint8, for observe dist only). Mirrors JS nextUnobserved/observe/ban bookkeeping exactly for selection sequence.
+- GPU owns: wave + compatible state (persistent buffers), GpuPropagator.
+- Clear: use Exposed to drive JS clear (H10 fast path), snapshot wave/compat/sums, init CPU bucket from sums, ONE full upload via initializeState.
+- Per observe: CPU pick+weighted (produce T-1 seed bans, apply to cpuWave/sums/PQ), GPU propagateIncremental(seeds): apply seeds via applicator kernel (small dispatch), seed work, run cascade with count-sampling every 8 dispatches (early exit when frontier 0), read O(banned) log for derived; CPU applyBans(derived) O(banned) to mirror+sums+PQ. No full uploads after init.
+- Restart H12, DET contract preserved.
+- Cascade stop: tried sample=1 (high overhead), settled on 8 for balance (shallow cascades stop early; deep pay up to diam).
+
+**Correctness gates (before any timing):**
+- Gate (single prop) still PASS (0 wave diffs) after refactor.
+- Full run: DET (run twice, identical observed) PASS on all cases.
+- Validity: 0 adjacency violations (using ref propagator check) PASS; complete tilings where reported ok.
+
+**Full-run measurements (real; Apple M + bun-webgpu; exclude ctor/setup, include entire observe loop + traffic + cascades):**
+
+| case                | JS ms  | GPU ms   | speedup | valid | det | observes |
+|---------------------|--------|----------|---------|-------|-----|----------|
+| circuit-64          | 20.3   | 3705     | 0.005x  | PASS  | PASS| 2964     |
+| circuit-128         | 49.8   | 24226    | 0.002x  | PASS  | PASS| 11816    |
+| circuit-256         | 198    | 135179   | 0.0015x | PASS  | PASS| 47479    |
+| knots-128           | 7.5    | 16081    | 0.0005x | PASS  | PASS| 16225    |
+| knots-256           | 29.8   | 100442   | 0.0003x | PASS  | PASS| 65230    |
+
+(Js times vs post-H31 optimized; GPU times vary ±10% run-run due to queue/map latency; numbers above from the captured run.)
+
+**Crossover:** NEVER. GPU loses by 200-3000x even at circuit-256. Single-prop win does not survive full run.
+
+**Root cause (the make-or-break):** Per-observe overhead (apply dispatch + seed write + diam/8 count mapAsync syncs + log read + queue pressure) × #observes (~N) dominates any parallel decrement savings. Even with early stop (saves useless tail dispatches on shallow cascades), #dispatches total ~ (avg cascade depth) * N is 10^4-10^5 launches; each has host launch + sync cost. Uploads minimal (only seeds) but the readback sync points per phase kill it. On light tileset (knots) even worse as expected.
+
+**Honest verdict:**
+Per-observe CPU/GPU traffic + dispatch/readback cadence makes the hybrid GPU path INFEASIBLE for WFC's observe	o propagate pattern. The one-propagate crossover was real but does not translate; further work on this exact strategy (even with indirect dispatch etc) not justified vs. pure-JS which is already fast.
+
+STOP the GPU build here. No Stage 3. Record the negative result plainly.
+
+All numbers real (no fab). Ran via bench script on 2026-06-25. Commit (src-optimized/webgpu/ + scripts/ + log only).

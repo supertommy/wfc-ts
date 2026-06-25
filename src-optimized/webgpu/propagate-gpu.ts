@@ -22,10 +22,10 @@ const FUSED_WGSL = `
 @group(0) @binding(2) var<storage, read_write> curBanned: array<atomic<u32>>;
 @group(0) @binding(3) var<storage, read_write> nextBanned: array<atomic<u32>>;
 @group(0) @binding(4) var<storage, read> propData: array<u32>;
-@group(0) @binding(5) var<storage, read> propStart: array<u32>;
-@group(0) @binding(6) var<storage, read> propLen: array<u32>;
-@group(0) @binding(7) var<storage, read> neighbors: array<i32>;
-@group(0) @binding(8) var<uniform> params: vec4<u32>; // [T, T4, count, 0]
+@group(0) @binding(5) var<storage, read> propMeta: array<u32>; // [start, len] pairs for each key
+@group(0) @binding(6) var<storage, read> neighbors: array<i32>;
+@group(0) @binding(7) var<uniform> params: vec4<u32>; // [T, T4, count, 0]
+@group(0) @binding(8) var<storage, read_write> bannedLog: array<atomic<u32>>;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -41,8 +41,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (i2i < 0) { continue; }
     let i2: u32 = u32(i2i);
     let key: u32 = d * T + t1;
-    let start: u32 = propStart[key];
-    let len: u32 = propLen[key];
+    let start: u32 = propMeta[key * 2u];
+    let len: u32 = propMeta[key * 2u + 1u];
     let base2: u32 = i2 * T4;
     for (var l: u32 = 0u; l < len; l = l + 1u) {
       let t2: u32 = propData[start + l];
@@ -61,11 +61,40 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let pos: u32 = atomicAdd(&nextBanned[0], 1u);
             atomicStore(&nextBanned[1u + pos * 2u], i2);
             atomicStore(&nextBanned[1u + pos * 2u + 1u], t2);
+            // accumulate for incremental return (derived bans only)
+            let logpos: u32 = atomicAdd(&bannedLog[0], 1u);
+            atomicStore(&bannedLog[1u + logpos * 2u], i2);
+            atomicStore(&bannedLog[1u + logpos * 2u + 1u], t2);
           }
         }
       }
     }
   }
+}
+`;
+
+const APPLY_INITIAL_BANS_WGSL = `
+@group(0) @binding(0) var<storage, read_write> wave: array<atomic<u32>>;
+@group(0) @binding(1) var<storage, read_write> compatible: array<atomic<i32>>;
+@group(0) @binding(2) var<storage, read> bans: array<u32>; // [count, (i,t)* ]
+@group(0) @binding(3) var<uniform> params: vec2<u32>; // [T, T4]
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let idx: u32 = gid.x;
+  let n: u32 = bans[0];
+  if (idx >= n) { return; }
+  let i: u32 = bans[1u + idx * 2u];
+  let t: u32 = bans[1u + idx * 2u + 1u];
+  let T: u32 = params[0];
+  let T4: u32 = params[1];
+  let waddr: u32 = i * T + t;
+  atomicStore(&wave[waddr], 0u);
+  let cbase: u32 = i * T4 + t * 4u;
+  atomicStore(&compatible[cbase + 0u], 0i);
+  atomicStore(&compatible[cbase + 1u], 0i);
+  atomicStore(&compatible[cbase + 2u], 0i);
+  atomicStore(&compatible[cbase + 3u], 0i);
 }
 `;
 
@@ -121,8 +150,7 @@ export class GpuPropagator {
 
   // Static (read-only) buffers
   private readonly propDataBuf: GPUBuffer;
-  private readonly propStartBuf: GPUBuffer;
-  private readonly propLenBuf: GPUBuffer;
+  private readonly propMetaBuf: GPUBuffer;
   private readonly neighborsBuf: GPUBuffer;
   private readonly paramsBuf: GPUBuffer;
 
@@ -138,6 +166,15 @@ export class GpuPropagator {
   private readonly waveReadback: GPUBuffer;
   private readonly compatReadback: GPUBuffer;
   private readonly countReadback: GPUBuffer;
+
+  // For banned accumulation (used by incremental path)
+  private readonly bannedLog: GPUBuffer;
+  private readonly bannedLogReadback: GPUBuffer;
+
+  // For apply-initial-bans (incremental observe seeds)
+  private readonly banListBuf: GPUBuffer;
+  private readonly applyPipeline: GPUComputePipeline;
+  private readonly applyParamsBuf: GPUBuffer;
 
   private readonly workBufSize: number;
   private readonly maxWorkgroups: number;
@@ -163,11 +200,13 @@ export class GpuPropagator {
     const propDataU32 = new Uint32Array(data.propData.length);
     for (let i = 0; i < data.propData.length; i++) propDataU32[i] = data.propData[i] >>> 0;
 
-    const propStartU32 = new Uint32Array(data.propStart.length);
-    for (let i = 0; i < data.propStart.length; i++) propStartU32[i] = data.propStart[i] >>> 0;
-
-    const propLenU32 = new Uint32Array(data.propLen.length);
-    for (let i = 0; i < data.propLen.length; i++) propLenU32[i] = data.propLen[i] >>> 0;
+    // pack start+len into single meta buffer to keep total storage bindings <=8 (adapter limit)
+    const nKeys = data.propStart.length;
+    const propMetaU32 = new Uint32Array(nKeys * 2);
+    for (let i = 0; i < nKeys; i++) {
+      propMetaU32[i * 2] = data.propStart[i] >>> 0;
+      propMetaU32[i * 2 + 1] = data.propLen[i] >>> 0;
+    }
 
     const neighborsI32 = new Int32Array(data.neighbors);
 
@@ -182,21 +221,13 @@ export class GpuPropagator {
     new Uint32Array(this.propDataBuf.getMappedRange()).set(propDataU32);
     this.propDataBuf.unmap();
 
-    this.propStartBuf = device.createBuffer({
-      size: propStartU32.byteLength,
+    this.propMetaBuf = device.createBuffer({
+      size: propMetaU32.byteLength,
       usage: GPUBufferUsage.STORAGE,
       mappedAtCreation: true,
     });
-    new Uint32Array(this.propStartBuf.getMappedRange()).set(propStartU32);
-    this.propStartBuf.unmap();
-
-    this.propLenBuf = device.createBuffer({
-      size: propLenU32.byteLength,
-      usage: GPUBufferUsage.STORAGE,
-      mappedAtCreation: true,
-    });
-    new Uint32Array(this.propLenBuf.getMappedRange()).set(propLenU32);
-    this.propLenBuf.unmap();
+    new Uint32Array(this.propMetaBuf.getMappedRange()).set(propMetaU32);
+    this.propMetaBuf.unmap();
 
     this.neighborsBuf = device.createBuffer({
       size: neighborsI32.byteLength,
@@ -246,12 +277,39 @@ export class GpuPropagator {
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
 
+    this.bannedLog = device.createBuffer({
+      size: this.workBufSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+    });
+    this.bannedLogReadback = device.createBuffer({
+      size: this.workBufSize,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+
+    this.banListBuf = device.createBuffer({
+      size: this.workBufSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+
     // Pipeline (created once)
     const shaderModule = device.createShaderModule({ code: FUSED_WGSL });
     this.pipeline = device.createComputePipeline({
       layout: "auto",
       compute: { module: shaderModule, entryPoint: "main" },
     });
+
+    const applyModule = device.createShaderModule({ code: APPLY_INITIAL_BANS_WGSL });
+    this.applyPipeline = device.createComputePipeline({
+      layout: "auto",
+      compute: { module: applyModule, entryPoint: "main" },
+    });
+    this.applyParamsBuf = device.createBuffer({
+      size: 8,
+      usage: GPUBufferUsage.UNIFORM,
+      mappedAtCreation: true,
+    });
+    new Uint32Array(this.applyParamsBuf.getMappedRange()).set([data.T >>> 0, data.T4 >>> 0]);
+    this.applyParamsBuf.unmap();
   }
 
   /**
@@ -321,10 +379,10 @@ export class GpuPropagator {
           { binding: 2, resource: { buffer: curBuf } },
           { binding: 3, resource: { buffer: nxtBuf } },
           { binding: 4, resource: { buffer: this.propDataBuf } },
-          { binding: 5, resource: { buffer: this.propStartBuf } },
-          { binding: 6, resource: { buffer: this.propLenBuf } },
-          { binding: 7, resource: { buffer: this.neighborsBuf } },
-          { binding: 8, resource: { buffer: paramsBuf } },
+          { binding: 5, resource: { buffer: this.propMetaBuf } },
+          { binding: 6, resource: { buffer: this.neighborsBuf } },
+          { binding: 7, resource: { buffer: paramsBuf } },
+          { binding: 8, resource: { buffer: this.bannedLog } },
         ],
       });
       const pass = enc.beginComputePass();
@@ -380,5 +438,148 @@ export class GpuPropagator {
     const ok = cell0Options > 0;
 
     return { wave: outWave, compatible: outCompat, ok };
+  }
+
+  /**
+   * One-time full state upload after clear/fixpoint (used by hybrid runner).
+   * Subsequent updates use incremental seed-bans only (no full re-upload).
+   */
+  async initializeState(wave: Uint8Array, compatible: Uint8Array): Promise<void> {
+    const { device, T, T4, count, waveBuf, compatBuf } = this;
+    if (wave.length !== count * T) throw new Error("wave length mismatch");
+    if (compatible.length !== count * T4) throw new Error("compatible length mismatch");
+    const waveU32 = new Uint32Array(count * T);
+    for (let i = 0; i < wave.length; i++) waveU32[i] = wave[i] ? 1 : 0;
+    const compatI32 = new Int32Array(count * T4);
+    for (let i = 0; i < compatible.length; i++) compatI32[i] = compatible[i] | 0;
+    device.queue.writeBuffer(waveBuf, 0, waveU32);
+    device.queue.writeBuffer(compatBuf, 0, compatI32);
+  }
+
+  /**
+   * Incremental: state already lives on GPU (from init or prior prop).
+   * - Applies the seed bans (from CPU observe) directly on GPU via applicator kernel.
+   * - Seeds worklist, runs cascade with per-dispatch (or K) count readback for early stop when frontier empty.
+   * - Returns ONLY the newly discovered banned (i,t) from the cascade (derived, not the seeds themselves).
+   * - This enables O(banned) traffic for the cascade result.
+   * Tries K=1 first; caller can experiment.
+   */
+  async propagateIncremental(
+    initialNewlyBanned: Array<[number, number]>,
+    sampleEvery = 1
+  ): Promise<{ newlyBanned: Array<[number, number]>; ok: boolean }> {
+    const { device, T, T4, count, waveBuf, compatBuf, workA, workB } = this;
+    const nInit = initialNewlyBanned.length;
+    let newlyBanned: Array<[number, number]> = [];
+
+    // 1. Apply seed bans on GPU (zero wave + 4 compats) via dedicated small dispatch
+    if (nInit > 0) {
+      const banData = new Uint32Array(1 + 2 * nInit);
+      banData[0] = nInit >>> 0;
+      for (let k = 0; k < nInit; k++) {
+        banData[1 + k * 2] = initialNewlyBanned[k][0] >>> 0;
+        banData[1 + k * 2 + 1] = initialNewlyBanned[k][1] >>> 0;
+      }
+      device.queue.writeBuffer(this.banListBuf, 0, banData);
+
+      const encApply = device.createCommandEncoder();
+      const applyBind = device.createBindGroup({
+        layout: this.applyPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: waveBuf } },
+          { binding: 1, resource: { buffer: compatBuf } },
+          { binding: 2, resource: { buffer: this.banListBuf } },
+          { binding: 3, resource: { buffer: this.applyParamsBuf } },
+        ],
+      });
+      const passApply = encApply.beginComputePass();
+      passApply.setPipeline(this.applyPipeline);
+      passApply.setBindGroup(0, applyBind);
+      passApply.dispatchWorkgroups(Math.ceil(nInit / 64));
+      passApply.end();
+      device.queue.submit([encApply.finish()]);
+    }
+
+    // 2. Seed the prop worklist (the seeds will drive the neighbor decrs)
+    const initData = new Uint32Array(1 + 2 * nInit);
+    initData[0] = nInit >>> 0;
+    for (let k = 0; k < nInit; k++) {
+      initData[1 + k * 2] = initialNewlyBanned[k][0] >>> 0;
+      initData[1 + k * 2 + 1] = initialNewlyBanned[k][1] >>> 0;
+    }
+    let curBuf = workA;
+    let nxtBuf = workB;
+    device.queue.writeBuffer(curBuf, 0, initData);
+
+    // reset log for this cascade (derived only)
+    device.queue.writeBuffer(this.bannedLog, 0, new Uint32Array([0]));
+
+    const maxWgs = this.maxWorkgroups;
+    const diam = this.diameter;
+
+    // 3. Cascade loop with early stop on empty worklist
+    let curCount = nInit;
+    for (let it = 0; it < diam; it++) {
+      if (curCount === 0) break; // previous check
+      device.queue.writeBuffer(nxtBuf, 0, new Uint32Array([0]));
+
+      const enc = device.createCommandEncoder();
+      const bind = device.createBindGroup({
+        layout: this.pipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: waveBuf } },
+          { binding: 1, resource: { buffer: compatBuf } },
+          { binding: 2, resource: { buffer: curBuf } },
+          { binding: 3, resource: { buffer: nxtBuf } },
+          { binding: 4, resource: { buffer: this.propDataBuf } },
+          { binding: 5, resource: { buffer: this.propMetaBuf } },
+          { binding: 6, resource: { buffer: this.neighborsBuf } },
+          { binding: 7, resource: { buffer: this.paramsBuf } },
+          { binding: 8, resource: { buffer: this.bannedLog } },
+        ],
+      });
+      const pass = enc.beginComputePass();
+      pass.setPipeline(this.pipeline);
+      pass.setBindGroup(0, bind);
+      pass.dispatchWorkgroups(maxWgs);
+      pass.end();
+      device.queue.submit([enc.finish()]);
+
+      const tmp = curBuf;
+      curBuf = nxtBuf;
+      nxtBuf = tmp;
+
+      // sample the *new* cur count (produced by this dispatch)
+      if ((it + 1) % sampleEvery === 0 || (it + 1) === diam) {
+        const encCheck = device.createCommandEncoder();
+        encCheck.copyBufferToBuffer(curBuf, 0, this.countReadback, 0, 4);
+        device.queue.submit([encCheck.finish()]);
+        await this.countReadback.mapAsync(GPUMapMode.READ);
+        curCount = new Uint32Array(this.countReadback.getMappedRange())[0] >>> 0;
+        this.countReadback.unmap();
+        if (curCount === 0) {
+          break;
+        }
+      }
+    }
+
+    // 4. Read only the bannedLog (O(#derived bans) traffic)
+    const encLog = device.createCommandEncoder();
+    encLog.copyBufferToBuffer(this.bannedLog, 0, this.bannedLogReadback, 0, this.workBufSize);
+    device.queue.submit([encLog.finish()]);
+    await this.bannedLogReadback.mapAsync(GPUMapMode.READ);
+    const logU32 = new Uint32Array(this.bannedLogReadback.getMappedRange()).slice(0);
+    this.bannedLogReadback.unmap();
+
+    const nLog = logU32[0] >>> 0;
+    newlyBanned = [];
+    for (let k = 0; k < nLog; k++) {
+      newlyBanned.push([logU32[1 + k * 2] | 0, logU32[1 + k * 2 + 1] | 0]);
+    }
+
+    // For hybrid runner we ignore the returned ok (CPU maintains sumsOfOnes and checks after applyBans).
+    // Skip the cell0 read to reduce per-observe mapAsync overhead in the make-or-break measurement.
+    const ok = true;
+    return { newlyBanned, ok };
   }
 }
