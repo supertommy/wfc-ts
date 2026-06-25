@@ -1588,3 +1588,36 @@ Verdict: reject as a performance path, despite useful correctness evidence. This
 Learning: collapsing mapAsync/submit boundaries is necessary but not sufficient. The remaining killer is sequential observe structure plus fixed propagation epochs. A GPU path that performs one dispatch per propagation layer per observe is not competitive, even with one queue submit. The next viable branch must change the propagation formulation itself: bulk relaxation/fixed-point epochs that scan the whole grid in coarse passes, or a true GPU frontier compaction/indirect scheme that avoids both spin barriers and `count*K` dispatch trains.
 
 Next ratchet hypothesis: bulk relaxation/fixed-point epochs. Replace the AC-4 worklist with a GPU-friendly full-grid relaxation pass that recomputes unsupported live tiles in parallel and bans them. First test it as a single-propagation backend and then, only if promising, evaluate full-run integration.
+
+### GPU ratchet iteration 4 — bulk relaxation/fixed-point propagation
+
+Hypothesis: replace AC-4 frontier propagation with a GPU-native full-grid relaxation loop. Each epoch scans every live `(cell,tile)`, recomputes whether it has support in every direction from the current wave, marks unsupported live tiles, applies all marks, and repeats to fixpoint. This avoids frontier lifecycle complexity and maps cleanly to dense GPU parallelism.
+
+Added `scripts/webgpu-bulk-relax-proto.ts`:
+- Script-local single-propagation backend test.
+- Builds `allowed[d][neighborTile][tile]` from the existing propagator CSR.
+- Uses the CPU-compatible direction semantics: `compatible[i,t,d]` is supported by the opposite neighbor and `prop[d][neighborTile]` containing `t`.
+- Compares final wave byte-for-byte against CPU AC-4 and the current worklist GPU backend.
+- Strengthened the trigger by trying every possible kept tile at the center and selecting the largest resulting cascade.
+
+Verification:
+
+```text
+bun run typecheck
+PASS
+
+bun run scripts/webgpu-bulk-relax-proto.ts
+case                 | size |  cell | keep | seed | bestBan | CPU ms  | work GPU | bulk ms  | epochs | bulkBan | workDiff | bulkDiff | cpu
+---------------------|------|-------|------|------|---------|---------|----------|----------|--------|---------|----------|----------|----
+circuit-turnless     |   34 |   595 |    7 |   35 |      775 |   0.066 |     8.638 |   10.735 |      8 |      740 |        0 |        0 | ok
+circuit-turnless     |   64 |  2080 |    7 |   35 |      775 |   0.056 |     9.177 |    5.393 |      8 |      740 |        0 |        0 | ok
+circuit-turnless     |  128 |  8256 |    7 |   35 |      775 |   0.051 |    11.096 |    9.179 |      8 |      740 |        0 |        0 | ok
+circuit-turnless     |  256 | 32896 |    7 |   35 |      775 |   0.069 |    26.435 |   25.429 |      8 |      740 |        0 |        0 | ok
+knots-standard       |   48 |  1176 |    6 |    8 |       28 |   0.002 |     2.068 |    1.466 |      2 |       20 |        0 |        0 | ok
+```
+
+Verdict: correct, but reject as a full-run performance path. Bulk relaxation exactly matched CPU AC-4's final wave on all tested cases. It is sometimes faster than the current safe worklist GPU for single propagation at larger grids (`circuit-128`: 9.18ms vs worklist 11.10ms; `circuit-256`: 25.43ms vs 26.44ms), but both are orders of magnitude slower than the optimized CPU for these realistic observe cascades (~0.05-0.07ms). The largest single-cell cascade in this periodic circuit subset is only 775 total bans, so a full-grid scan over `count*T` tiles for 8 epochs does too much work. Integrated into a full solve, it would still pay many dense epochs per observe and cannot plausibly beat the JS solver.
+
+Learning: changing to dense GPU relaxation solves the synchronization shape but loses on work volume. The remaining plausible no-spin frontier branch is not dense scanning; it is reducing the worklist backend's over-dispatch. Current worklist kernels dispatch `ceil(count*T/64)` groups every frontier layer even when the actual frontier is tiny. A GPU-side indirect-dispatch argument derived from the frontier count could reduce shader overwork without readback.
+
+Next ratchet hypothesis: indirect frontier dispatch. Prototype a single-propagation worklist backend that writes `dispatchWorkgroupsIndirect` arguments from the current frontier count on GPU, then dispatches only enough workgroups for that frontier layer. Measure correctness and speed versus the current max-workgroups worklist and CPU. If that also fails, the no-spin WebGPU path is likely exhausted for this solver shape.

@@ -113,6 +113,7 @@ Post-discussion continuation:
 - GPU ratchet iteration 1 added `scripts/bench-gpu-crossover-gate.ts`. Baseline current hybrid on `circuit-turnless-128`: JS `57.4ms`, GPU `23599.6ms`, VALID PASS, DET PASS, `0.002x`; boundary counts for one GPU run were `135970` writeBuffer calls, `136717` submits, `24381` mapAsync readbacks. This is now the standard gate for future GPU candidates.
 - GPU ratchet iteration 2 tested chunked fixed-epoch command batches in the optional propagation path. Correctness gates PASS and submits dropped sharply (`136717` → `35451` at circuit-128), but wall time did not improve (`26168ms` at K=16; `36310ms` at K=32) because per-observe CPU mirror return still requires ~2 `mapAsync` calls per observe (`23635` mapAsync for `11816` observes). Conclusion: propagation-layer batching is below the real bottleneck; next candidates must remove per-observe banned-log/readback dependency by keeping observe/selection/progression on GPU for chunks, or switch to bulk relaxation.
 - GPU ratchet iteration 3 added `scripts/webgpu-no-spin-chunk-proto.ts`: a command-ordered full-GPU run (`select -> weighted observe -> K propagation layers`, repeated `count` times) with one submit and one final readback. It was VALID+DET on circuit 8/16/32 for tested K, but very slow: circuit-32,K=16 was `681ms` vs JS `6.77ms` (`0.010x`) with `19456` dispatches; K=32 was `1744ms`. Conclusion: collapsing readbacks is necessary but insufficient if the algorithm still emits `count*(3+K)` dispatches and has no cheap proof K is always enough. Next branch: bulk relaxation/fixed-point epochs or true frontier compaction/indirect.
+- GPU ratchet iteration 4 added `scripts/webgpu-bulk-relax-proto.ts`: whole-grid relaxation propagation (`scan unsupported live tiles -> apply bans -> repeat`). It exactly matched CPU AC-4 final waves. It sometimes beat the safe worklist GPU for single propagation (`circuit-128`: `9.18ms` bulk vs `11.10ms` worklist; `circuit-256`: `25.43ms` vs `26.44ms`), but CPU was still ~`0.05-0.07ms` because realistic single-observe cascades were only 775 total bans. Conclusion: dense scans solve synchronization but do too much work; next remaining branch is indirect frontier dispatch to reduce worklist over-dispatch.
 
 ## Open-source finish (after GPU research pauses/concludes)
 
@@ -153,11 +154,12 @@ Hard stop criteria for the GPU ratchet:
 7. `scripts/webgpu-boundary-probe.ts` — latest boundary-crossing feasibility probe.
 8. `scripts/bench-gpu-crossover-gate.ts` — standard large-grid VALID+DET+boundary-count gate for GPU ratchet candidates.
 9. `scripts/webgpu-no-spin-chunk-proto.ts` — no-spin full-GPU command-ordered observe chunk prototype (correct small, too slow).
-10. `scripts/webgpu-prototype-v2.ts` — single-propagation large-grid crossover prototype.
-11. KB: `/Users/tommy/Documents/projects/superhq/tommyato-knowledge/investigations/gpu-frontier-data-structures-for-wfc.md`.
-12. `prompts/optimize-one.md` — CPU ratchet methodology if needed.
-13. `HARNESS-BASELINE.md` — the gate contract (valid+det; compare informational).
-14. `benchmarks/external/RESULTS.md` — external comparison (needs post-Round-3 refresh before release).
+10. `scripts/webgpu-bulk-relax-proto.ts` — bulk relaxation propagation prototype (correct, dense-scan work volume too high).
+11. `scripts/webgpu-prototype-v2.ts` — single-propagation large-grid crossover prototype.
+12. KB: `/Users/tommy/Documents/projects/superhq/tommyato-knowledge/investigations/gpu-frontier-data-structures-for-wfc.md`.
+13. `prompts/optimize-one.md` — CPU ratchet methodology if needed.
+14. `HARNESS-BASELINE.md` — the gate contract (valid+det; compare informational).
+15. `benchmarks/external/RESULTS.md` — external comparison (needs post-Round-3 refresh before release).
 
 ## Match contract (the gate)
 
