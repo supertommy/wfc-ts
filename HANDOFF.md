@@ -60,10 +60,11 @@ CPU/GPU boundary crossings**. We tested that in stages:
    prop matched CPU exactly**, but multi-observe chaining produced deterministic, complete-looking
    but **invalid** tilings (e.g. circuit-16 had 22 illegal adjacency pairs; knots-16 had 456).
 
-Current interpretation: the boundary-crossing idea is valid; the next blocker is **GPU algorithm /
-frontier lifecycle correctness**, not raw overhead. Likely root areas: dropped worklist items,
-ping-pong parity/clearing, not proving both frontier counts empty before next observe, observe bans
-not all enqueued, or stale `sumsOfOnes` selection.
+Current interpretation after lockstep debugging: the boundary-crossing idea is valid, and the Stage 3
+invalidity root cause was found. The fused atomic-append AC-4 frontier kernel, parallel MRV selection,
+GPU weighted observe, and `sumsOfOnes` maintenance all match CPU under a true fixpoint drain. The broken
+assumption was using grid diameter as a no-readback propagation bound; WFC support cascades can outlive
+geometric distance and must prove frontier-empty before the next observe.
 
 A KB investigation was added and committed in `tommyato-knowledge`:
 `investigations/gpu-frontier-data-structures-for-wfc.md` (commit `4a7e7c0`). Key framing:
@@ -96,8 +97,13 @@ Recommended next technical step:
 3. If continuing GPU, rebuild the chunked prototype with the fixed safe-drain invariant and measure whether any convergence strategy can beat JS.
 4. Only switch to scan/compact if a real atomic-append frontier lifecycle bug is proven; current evidence says the fault was the unsafe bound.
 
-The pure-JS solver remains the shippable path. Treat GPU as a research branch until it passes
-VALID+DET on small grids and then crosses over on large heavy grids.
+Discussion framing for the next session:
+- The question is no longer “can GPU WFC be correct?” — yes, under a true fixpoint drain.
+- The question is “can GPU WFC prove frontier-empty cheaply enough to beat the optimized JS solver?”
+- Safe `count*T` dispatches are correct but likely too slow for full runs.
+- Per-observe CPU readback is correct but already measured catastrophically slow in Stage 2.
+- The only plausible win is a GPU-side convergence mechanism (indirect dispatch / persistent loop / cooperative barrier-like design), but WebGPU portability is the risk.
+- The pure-JS solver remains the shippable path. Treat GPU as research until it passes VALID+DET and crosses over on large heavy grids.
 
 ## Open-source finish (after GPU research pauses/concludes)
 
@@ -146,9 +152,10 @@ in the log with measurements.
 
 - **No background jobs/monitors are running** unless a fresh session starts one.
 - Stage 2 GPU hybrid is correct but unusably slow; do not optimize around per-observe `mapAsync`.
-  The only promising GPU direction is GPU-native frontier correctness with crossings collapsed.
+  The only promising GPU direction is GPU-side frontier-empty detection with crossings collapsed.
 - The throwaway full-GPU/chunked prototype script was deleted before commit; details are in
-  `OPTIMIZATION-LOG.md` commit `94bd52a` and the compacted conversation summary.
+  `OPTIMIZATION-LOG.md` commit `94bd52a`. Its invalidity is now best explained by the unsafe
+  fixed-diameter drain bound, later proven/fixed in commit `89ca978`.
 - `git config user.name/email` is set locally (tommyato) so subagent commits work.
 - Reference repos cloned in `../references/` (WaveFunctionCollapse, fast-wfc,
   three-wfc, kchapelier-wfc, blazinwfc, lite-wfc) — read-only, not committed.
