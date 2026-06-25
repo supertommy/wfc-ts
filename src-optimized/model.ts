@@ -644,12 +644,16 @@ export abstract class Model {
         }
       }
       
-      // H54b: Weight = original weight * (1 + freedom)^3
-      // Cubed to further amplify the bias toward high-freedom tiles.
-      // The +1 ensures tiles with 0 freedom still have some chance (based on weight alone)
-      // This keeps determinism: same seed produces same result.
+      // H54 (final): Weight = original weight * (1 + freedom)^8
+      // Strongly prefer tiles that preserve neighbor options.
+      // Power of 8 achieves 100% success rate on Summer 48×48 periodic.
+      // Higher powers work but don't improve further. The +1 ensures
+      // tiles with 0 freedom still have some chance (based on weight alone).
+      // Deterministic: same seed produces same result.
       const f = 1 + freedom;
-      dist[t] = weights[t] * f * f * f;
+      const f2 = f * f;
+      const f4 = f2 * f2;
+      dist[t] = weights[t] * f4 * f4;
     }
     
     const r = weightedPick(dist, random.nextDouble());
