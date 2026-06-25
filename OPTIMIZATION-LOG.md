@@ -763,3 +763,55 @@ H20 (multi-res) REJECTED: huge-grids-only (no benefit on 24-48 committed grids) 
 preprocessing + changes outputs. Future stretch for 256x+ (like H21 WebGPU).
 
 Next: H26 (propData→Uint8), then H27, H28.
+
+
+## Hypothesis 26 — propData Int32→Uint8 (cache-speed win on the propagation inner loop read) [KEPT]
+
+**Hypothesis:** H23 won by narrowing `compatible` Int32→Uint8 (4× cache on the decrement). The SAME
+angle on `propData` (the CSR t2 list data READ in the propagate inner loop `t2 = propData[start+l]`,
+60-66% wall) + propLen. t2 ids ≤T<256 (knots9/circuit36/rooms28) exact fit Uint8 (4× smaller).
+No arithmetic on values (pure ids, read only) → no underflow/wrap concern (unlike compatible counts).
+Auto-select by T (max id) same pattern as H23. propLen auto-narrow Uint8 (lens≤T); propStart
+optional Uint16 (offsets <64k on our grids, low-value outer reads). prop* built once (ctor),
+constant, not H10-snapshotted. Tier-1 (same ids → same decr/bans/seq → byte-id outputs).
+
+**Change:** Two files, one hypothesis. `src-optimized/model.ts`: updated propData/propStart/propLen
+decls to unions; added Prop*Ctor fields + comments mirroring H23 (header, decls, propagate,
+init, footprint). `src-optimized/simple-tiled-model.ts`: after computing total in ctor, auto-choose
+PropDataCtor/PropLenCtor/PropStartCtor by T/total (<256/ <65536 rules); `new Ctor(...)`; assign
+this.prop* and this.Prop*Ctor. Matches style, no other logic change. Only src-optimized/ edited.
+
+**Gate + Measure (followed optimize-one.md + task exactly; all numbers real harness runs):**
+- `npx tsc --noEmit` clean (strict) before/after.
+- `bun run harness/prove-harness.ts`: VALID+DET (viol=0) pre+post; DET re-runs match checksums;
+  compare* FAIL unchanged (Tier-1 after H4). Gate PASS.
+- SPEED (primary; `harness/measure-speedup.ts` median-of-5; before via `git stash` of clean
+  post-ideation-2 / post-H23/H22/H16, after on patch; same machine, paired stash dance):
+
+| input               | before opt | after opt | delta      | speedup-b | speedup-a | auto-type (data/len/start) |
+|---------------------|------------|-----------|------------|-----------|-----------|----------------------------|
+| knots-standard-48   | 1.688 ms   | 1.537 ms  | -0.151 ms  | 6.85x     | 7.52x     | Uint8/Uint8/Uint16         |
+| circuit-turnless-34 | 3.949 ms   | 3.421 ms  | -0.528 ms  | 2.03x     | 2.36x     | Uint8/Uint8/Uint16         |
+| rooms-30            | 1.810 ms   | 1.716 ms  | -0.094 ms  | 1.82x     | 1.97x     | Uint8/Uint8/Uint16         |
+
+  Real above-noise gains on circuit (13%) and rooms (5%); knots no regression (gain).
+- MEMORY (`harness/memory.ts`): before 650828/1019836/633164 B → after 650156/1015036/631248 B
+  (deltas -672B / -4800B / -1916B). Matches calculation (propData 3B/entry save * total + propLen
+  + propStart 2B). propData slice itself 4× smaller as designed.
+- SUCCESS (Tier-1 no change): `bun run harness/success-rate.ts knots-dense-24 50` → 100.0% opt
+  (unchanged from pre-H26).
+
+**Decision:** KEEP (committed). Meets *exact* keep criteria for Round 3 SPEED (primary):
+VALID+DET mandatory; knots-48 does not regress (small gain); *real* above-noise speed gain on
+circuit (target) AND rooms. Memory reduction is bonus (spec: accept mem for speed, here we got
+both). Auto-selected Uint8 for propData (and propLen) on all committed tilesets. Tier-1:
+byte-identical outputs because ids unchanged, only storage width. Highest-payoff fresh cache
+lever remaining on the inner read. (Note: variance in absolute ms across runs; deltas from
+paired stash-before/after on same machine load were consistent in sign/magnitude.)
+
+**Cost:** stash dance (multiple paired) + 3×(5+5) measure + 3×prove + success50 + mem x2 + type xN +
+  temp probe logs (removed) + edit + log/readme + commit ~20min wall + harness runs.
+
+Next candidate recommended (per return spec): H27 (stack narrow) or H28 (sumsOfOnes), or
+re-profile optimized post-H26 to quantify if prop % dropped enough for diminishing returns;
+then H7 observe or new ideation for further.

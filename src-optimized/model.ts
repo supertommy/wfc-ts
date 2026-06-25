@@ -22,10 +22,11 @@
 //
 //   propagator[d][t1] was a number[][] list of allowed t2. In propagate() hot
 //   path and in clear() .length checks we chased two array objects per access.
-//   CSR layout: one Int32Array propData (concat all lists, d then t1 order),
+//   CSR layout: one (now auto-narrowed H26: Uint8/16/32) propData (concat all lists, d then t1 order),
 //   plus propStart/propLen indexed by (d*T + t1). Build once in ctor (untimed).
 //   Same lists + same iteration order over t2 => byte-identical outputs.
 //   Targets propagation-bound inputs (circuit/rooms). Pure layout, Tier-1.
+//   H26 narrows propData (inner read) + propLen for 4x cache on the read in decrement loop.
 //
 // HYPOTHESIS 4 (this iteration): heap-based entropy selection (O(log n) extract-min).
 //
@@ -85,6 +86,9 @@
 //   Store ctor+bpe. Underflow safe: ban zeros slots; post-ban decrs ≤T<256 never
 //   wrap 0→255... back to 0. Tier-1 (identical counts → byte-id outputs).
 //   footprintBytes sums .byteLength → auto reports the win.
+//
+// H26 (next): apply identical cache-narrow to propData (READ in inner t2=propData[start+l] loop),
+//   propLen, (optionally propStart). No underflow arithmetic on ids (pure reads); auto by T.
 //
 // PRNG: mulberry32, same as the reference (deterministic contract).
 
@@ -148,9 +152,12 @@ export abstract class Model {
   protected wave: Uint8Array = new Uint8Array(0);
   // Flattened propagator (CSR): propData concatenated lists (d outer, t1 inner),
   // propStart/propLen indexed d*T + t1. Same order as old lists => byte-id.
-  protected propData: Int32Array = new Int32Array(0);
-  protected propStart: Int32Array = new Int32Array(0);
-  protected propLen: Int32Array = new Int32Array(0);
+  // H26: auto-narrowed (propData by max id T<256→Uint8; propLen by len≤T→Uint8; propStart offsets
+  // may Uint16 for totals<65536 on our grids). propData READ in propagate inner loop.
+  // prop* built once in subclass ctor (tileset-const); H10 snapshots do not touch them.
+  protected propData: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
+  protected propStart: Uint16Array | Int32Array = new Int32Array(0);
+  protected propLen: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
   // Flattened AC-4 support counts: compatible[i*T4 + t*4 + d]. Hits 0 => ban.
   // H23: auto-narrowed (Uint8/16/Int32 chosen in init by maxPropLen); --/===0 identical.
   protected compatible: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
@@ -185,6 +192,13 @@ export abstract class Model {
   // Stored so we can new the matching type for snapshots and report if needed.
   protected CompatibleCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
   protected compatibleBpe = 4;
+
+  // H26: chosen narrow ctors for propData (ids <T), propLen (lens ≤T), propStart (offsets <total).
+  // Stored for symmetry with H23 + potential future use (e.g. reports). prop* created in
+  // subclass ctor using these; never recreated in init() or H10 (tileset-constant, not snapshotted).
+  protected PropDataCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
+  protected PropLenCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
+  protected PropStartCtor: Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
 
   // H10: cached post-clear fixpoint state (wave + compatible + sums + entropies + observed)
   // after boundary bans + initial propagate (the maximally-pruned start state for this
@@ -226,6 +240,7 @@ export abstract class Model {
     // <65536 → Uint16, else Int32. Post-ban underflow-wrap is safe: #post-ban
     // decrs to a 0-slot ≤ T <256 → never reaches 0 again (unlike Int32 going neg).
     // This shrinks the hot decrement array 4× → less cache pressure on prop wall.
+    // (H26: propLen itself auto-narrowed at build by same T<256 rule; v read as number.)
     {
       let maxPropLen = 0;
       for (let i = 0; i < this.propLen.length; i++) {

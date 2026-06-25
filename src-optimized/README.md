@@ -60,7 +60,7 @@ informational. See `prompts/optimize-one.md`.
 | H23 | compatible Int32 → Uint8 (counts are ≤T<256 for our tilesets, exact — no cap) | 1 (byte-id) | speed (propagation decrement loop — the 60-66% wall, via 4x cache reduction) | KEPT | Uint8 (maxPropLen=5/14/8 for knots/circuit/rooms); knots 1.791→1.728ms (no reg), circuit 4.358→4.037ms (+7.4%), rooms 1.965→1.898ms (+3.4%); mem -498kB/-1.0MB/-604kB; VALID+DET (byte-id); Tier-1 cache win on wall. See log. |
 | H24 | fast-log bitcast approximation (replace Math.log with bitcast log2 ~5-10x faster) | 2 (valid+det) | speed (ban entropy cost) | REJECTED | subsumed by H22 — MRV eliminates the per-ban Math.log ENTIRELY for the default path; fast-log only matters for the now-unused Entropy path. Strictly worse than H22 (approx vs elimination). |
 | H25 | spatially-biased selection (among min-entropy cells, pick nearest last-collapsed) | 2 (valid+det) | speed (propagation cache locality) | REJECTED | STEP1: already highly clustered (circuit avgManh consecutive-obs=4.24 vs ~23 random; rooms=3.02 vs~20). Heap+MRV does local nucleation naturally; no headroom. Even clean window-bias impl (b) tightens cluster but regresses speed (no cache win). See log. |
-| H26 | propData Int32→Uint8 (t2 ids are ≤T<256, exact) | 1 (byte-id) | speed (propagation inner loop — the wall, via 4x cache on propData) | TODO | IDEATION-2: apply H23's narrowing to the OTHER hot-loop array. propData is read in the propagate inner loop (`t2 = propData[start+l]`) — 4x smaller → fewer cache misses on the 60-66% wall. Tier-1 (same ids = byte-id). DO NEXT. |
+| H26 | propData Int32→Uint8 (t2 ids are ≤T<256, exact) + propLen Uint8 + propStart Uint16 | 1 (byte-id) | speed (propagation inner loop — the wall, via 4x cache on propData read) | KEPT | Uint8 (propData/propLen), Uint16 (propStart) for T=9/36/28 + totals<2k; knots 1.688→1.537ms (no reg), circuit 3.949→3.421ms (+13%), rooms 1.810→1.716ms (+5%); mem deltas -0.7/-4.8/-1.9 KB (prop shrink); VALID+DET (byte-id); Tier-1 cache win on inner-loop read. See log. |
 | H27 | stackT Int32→Uint8 (pattern ids ≤T<256) + stackI Int32→Uint16 (cell ids ≤count<65536) | 1 (byte-id) | speed (propagate push/pop cache) + memory | TODO | IDEATION-2: narrow the propagation stack. Read/written every ban + pop. Cache + memory win. Tier-1. |
 | H28 | sumsOfOnes Int32→Uint8 (live count ≤T<256) + sumsOfOnes0 cache | 1 (byte-id) | speed (nextUnobservedNode/heap-key reads) + memory | TODO | IDEATION-2: narrow the MRV key array (now the heap priority under H22). Tier-1. |
 
@@ -183,11 +183,12 @@ is REVERTED. A speed win that costs memory is KEPT.
 3. H12 restart-with-derived-seeds — KEPT (100% on dense+harder cases w/ ~0 retries); success axis MET. (H13 CDCL rejected: no target on harder cases.)
 4. H14/H17 success refinements — REJECTED (success axis maxed, no target).
 5. **H23 compatible→Uint8 — KEPT** (cache win: circuit +7%, rooms +3.4%, knots held; all Uint8; VALID+DET byte-id).
-6. **H22 MRV selection — KEPT** (elim per-ban Math.log via MRV default+guard; circuit +9.5%, rooms +5%, knots held; VALID+DET).
-7. H24 fast-log approx — REJECTED (subsumed by H22). H25 spatial — REJECTED after STEP1 (already clustered; see log).
-8. **H16 steppable/cancelable run — KEPT** (the web differentiator: *stepRun yields every N, AbortSignal or natural cancel, portable; run() verbatim fast path no-reg; same outputs; no other JS WFC offers step+cancel).
-9. H21 WebGPU — stretch speed path (now that H24/H25 rejected).
-10. Memory candidates (H18 sparse, H20 multi-res) — last; only if speed-neutral-or-better. H18 REJECTED after STEP1 (live=T at init on committed inputs; wave ~3-4% of fp; no mem win possible). H20 stretch. (H11/H19 REJECTED earlier.)
+6. **H26 propData/ propLen/Start narrow — KEPT** (H23 angle on inner prop read: Uint8/Uint8/Uint16; circuit +13%, rooms +5%, knots held; mem win; VALID+DET byte-id).
+7. **H22 MRV selection — KEPT** (elim per-ban Math.log via MRV default+guard; circuit +9.5%, rooms +5%, knots held; VALID+DET).
+8. H24 fast-log approx — REJECTED (subsumed by H22). H25 spatial — REJECTED after STEP1 (already clustered; see log).
+9. **H16 steppable/cancelable run — KEPT** (the web differentiator: *stepRun yields every N, AbortSignal or natural cancel, portable; run() verbatim fast path no-reg; same outputs; no other JS WFC offers step+cancel).
+10. H21 WebGPU — stretch speed path (now that H24/H25 rejected).
+11. Memory candidates (H18 sparse, H20 multi-res) — last; only if speed-neutral-or-better. H18 REJECTED after STEP1 (live=T at init on committed inputs; wave ~3-4% of fp; no mem win possible). H20 stretch. (H11/H19 REJECTED earlier.)
 
 **Round 3 target:** push circuit-turnless-34 and rooms-30 speedup vs reference
 well past the Round 2 wall (1.7x) toward >=3x via the algorithmic levers (H10/H15),
@@ -212,6 +213,8 @@ unchanged (H12 covers). Mem neutral (left H10 snapshots as-is). VALID+DET. Tier-
 Now propagation remains the wall; H24 (subsumed) + H25 (already-clustered, no headroom) rejected after investigation+exp. Round 3 speed target still open (circuit/rooms ~1.9-2.1x). Pivot to H16 or H21 or final ideation.
 
 **Post-H16 (this iteration):** H16 steppable/cancelable run loop KEPT as the "best on web" differentiator. Added *stepRun(seed, limit, restartBudget=100, yieldEvery=1, signal?:AbortSignal) : Generator<StepStatus> which mirrors run() logic exactly (dupe for hot-path purity) and yields {done:false, observedCell, attempt, cellsResolved} per N observes + final {done:true,ok,complete}. run() left verbatim as direct loop (generator drain regressed ~2x, switched to (a)). Verified: same outputs (cs match), VALID+DET, step check (knots-24: 551 observes+final done, yields correct, cancel+abort clean), speed no-reg (knots 6.3x/1.63ms, circ~1.88x/3.59ms, rooms~2.22x/1.78ms within noise), success 100%, mem unch. No other JS WFC has this. Portable plain TS. See log.
+
+**Post-H26 (this iteration):** H26 (propData+propLen+propStart cache-narrow) KEPT. Mirrored H23 auto-select: propData Uint8 (ids<T<256 exact), propLen Uint8, propStart Uint16 (offsets<64k on committed). Directly shrinks the inner-loop read `t2=propData[start+l]` (60-66% wall). Speed (paired med5): knots 1.688→1.537ms (no reg ~9% win), circuit 3.949→3.421ms (+13% /0.53ms), rooms 1.810→1.716ms (+5%/0.09ms). Mem win bonus: -672B / -4.8kB / -1.9kB (matches 3B+3B+2B per entry * counts). Auto-type Uint8/Uint8/Uint16 for all three inputs. VALID+DET, Tier-1 byte-id (no arith on propData). See log. Next: H27/H28 or re-profile to see if prop wall % dropped.
 
 ## Exit criteria (the orchestrator checks each loop turn)
 

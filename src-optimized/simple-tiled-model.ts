@@ -179,9 +179,23 @@ export class SimpleTiledModel extends Model {
     const PT = 4 * T;
     let total = 0;
     for (let k = 0; k < PT; k++) total += propLists[k].length;
-    const propData = new Int32Array(total);
-    const propStart = new Int32Array(PT);
-    const propLen = new Int32Array(PT);
+
+    // H26: auto-select narrow element types by max stored value (mirror H23's pattern for compatible).
+    // propData: stores t2 ids (0 <= t2 < T) → if T<256 Uint8 else ... (exact for our tilesets).
+    // propLen: stores list lengths (≤ T) → Uint8 auto (same rule).
+    // propStart: stores offsets into propData (0 <= start < total); for committed <65536 → Uint16 (optional).
+    // prop* built ONCE here (ctor); constant across runs; H10 fixpoint does NOT snapshot them.
+    // No arithmetic on propData values (pure ids, read-only in propagate) → no wrap concern.
+    const PropDataCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor =
+      T < 256 ? Uint8Array : T < 65536 ? Uint16Array : Int32Array;
+    const PropLenCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor =
+      T < 256 ? Uint8Array : T < 65536 ? Uint16Array : Int32Array;
+    const PropStartCtor: Uint16ArrayConstructor | Int32ArrayConstructor =
+      total < 65536 ? Uint16Array : Int32Array;
+
+    const propData = new PropDataCtor(total);
+    const propStart = new PropStartCtor(PT);
+    const propLen = new PropLenCtor(PT);
     let pos = 0;
     for (let k = 0; k < PT; k++) {
       const lst = propLists[k];
@@ -193,6 +207,9 @@ export class SimpleTiledModel extends Model {
     this.propData = propData;
     this.propStart = propStart;
     this.propLen = propLen;
+    this.PropDataCtor = PropDataCtor;
+    this.PropLenCtor = PropLenCtor;
+    this.PropStartCtor = PropStartCtor;
   }
 
   /** Debug grid of resolved tile-variant names. Empty where unresolved. */
