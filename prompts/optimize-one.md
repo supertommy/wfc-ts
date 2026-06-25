@@ -51,8 +51,12 @@ requires evidence. Never assert an unmeasured performance result.
    and pick the highest-Amdahl-payoff untried candidate: *fraction of measured
    runtime it touches × expected speedup on that fraction*. Not the safest — the
    highest payoff. If the current approach has stalled (filing stopped paying),
-   re-profile with `bun run scripts/profile.ts` and reconsider the *machine*, not
-   just keep filing. Do **not** do throwaway work (a change a planned later change
+   re-profile and reconsider the *machine*, not just keep filing. Note:
+   `scripts/profile.ts` instruments the *reference* and is stale post-H4 (the scan
+   it shows is gone). To find the OPTIMIZED's current bottleneck, instrument
+   `src-optimized/model.ts` with per-phase timers (heap extract / observe /
+   propagate / ban+heap-update) or use `bun --cpu-profile` on
+   `harness/run.ts optimized <input>`. Do **not** do throwaway work (a change a planned later change
    would discard — say so and skip it). Note which gate each candidate uses:
    - Tier-1 (layout-only, algorithm unchanged) → byte-identical to reference
      (compare* will read PASS, but that's informational).
