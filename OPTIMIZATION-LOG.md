@@ -1089,3 +1089,57 @@ Next candidate recommended (per return spec in task): H33 (flush micro gen-wrap 
 **Decision:** REVERTED (git checkout -- src-optimized/model.ts). Meets criteria: gates passed on the change, but *no measurable above-noise speed win* (within noise, mixed direction); knots-48 no regression but no real win either. The guard is cheap (predictable) + defensive documentation of the 2^32 assumption; keeping a no-op elision is not worth the latent (theoretical) risk. Honest "tried it" outcome; perfectly valid per ratchet rules. (This was the LAST TODO candidate.) Guard restored.
 
 **Cost:** grounding + before 3x measure5 + impl (1 edit) + type+prove+after 3x measure5 + mem + success + revert + log+readme + commit ~8min wall + harness runs. Ran every required gate/measure; no shortcuts.
+
+## Round 3 Iteration 20 — IDEATION PASS 4 (candidate list empty; confirm exhaustion or mint) [STALL→IDEATE]
+
+**Trigger:** All prior candidates resolved (H1–H4,H6,H10,H12,H16,H22,H23,H26–H31 KEPT; H5/H7/H8/H9/H11/H13–H15/H17–H21/H24/H25/H33 REVERTED or REJECTED). Per optimize-one.md stall path + task: creative-ideation pass on the remaining wall (propagation inner decrement `--compatible[cidx]; if (===0) ban` still ~85%+ circuit/rooms post all prior). Priority SPEED > success > memory. NO solver edits this iteration except temporary instrumentation in src-optimized/model.ts (debug dups + stride stats only; fully reverted before commit; `git diff src-optimized/model.ts` clean). Add only docs rows + log writeup + commit.
+
+**Current state (post-H29/H30/H31, clean harness runs this machine):** 
+- knots-standard-48: ~7.6–11× (median ~0.86–1.38 ms)
+- circuit-turnless-34: ~2.56–2.92× (~2.38–2.61 ms)
+- rooms-30: ~2.38–3.2× (~0.87–1.36 ms)
+- success 100% (dense + harder/larger cases per prior gates)
+- memory (circuit): 1244 KB → 659 KB (−47% via narrowing series)
+- steppable/cancelable (H16) live; clear fixpoint (H10) negligible cost; MRV+bucket (H22/H30) + neighbor table (H31) + cache-narrows (H23/H26/H27/H28) + dead drop (H29) applied.
+
+**Evidence grounding this pass (cited verbatim from history + fresh data):**
+- iter-15 profile (instrumented, medians; timers around phases + ban/flush): prop 56% knots / 87.4% circuit / 85.3% rooms; nextUnobs 22% only on knots (now lower post H30); clear <2%; ban subtotal 0.5–0.8 ms despite 18k–40k calls.
+- OPTIMIZATION-LOG reverts: H5 (guard-trim/dedup in decr) REVERTED — "hot-path branch+load overhead > saved"; H15 (watched literals, full AC-4 rewrite) REVERTED — "list mgmt+rescans > saved decrements (regressed 5–23%)"; H8/H7/H33 similar (micro moved or below noise). AC-4 decrement loop is the algorithmic wall; layout wins (H1/H2/H23/H26/H31) were the extractable gains.
+- Post-H31: outer wrap arith gone; inner decrement + ban on 0 remains.
+- All cache-narrow complete for hot structures (compat/prop/stack/sums → 1B where exact for T<256).
+
+**Creative-ideation routing (per skill):** UNBLOCKING + REFINING phase (empty list, confirm stop or mint); ARTIFACT domain (engineering param conflict: speed of decr loop vs. semantic fidelity + branch predictability + plain-JS cost model). Routed to TRIZ (parameter conflicts: improve speed of inner without adding work that hurts JS interp) + first-principles (excavate assumptions accreted in log: "always maintain per-dir counts", "lists must be duplicated", "cell-major is the only layout", "T must be general Int32") + biomimicry (natural analogs for constraint propagation / collapse — limited direct mapping, e.g. local support inhibition in reaction-diffusion or regulatory networks, but yields no new micro mechanism beyond "minimal work per arc" which AC-4 already is). Refused first-three slop ("just use WASM", "more guards", "bitset everything"). Anti-slop: every candidate names concrete mechanism + honest payoff grounded in dup numbers / span bytes / % from profile / prior revert data. No buzz; specific to WFC AC-4 + these tilesets (knots/circuit/rooms symmetries + T values).
+
+**Instrumentation performed (temp only, model.ts, reverted):** added debugPropagatorDupInfo() + debugCompatibleStrideInfo() (exact impl in transient edit; see /tmp/check-ideation4.ts for harness). Ran on all 3 committed inputs (after one run() to force init). Results (real, no fab):
+
+knots-standard-48 (T=9, count=2304, per=true): PROP DUP {"totalSlots":36,"uniqueLists":8,"perDirUnique":[2,2,2,2],"exampleDups":28,"maxDupCount":5}; COMPAT STRIDE {"bpe":1,"T4bytes":36,"listCount":36,"avgSpanBytes":31,"maxSpanBytes":36,"pctUnder64B":100,"pctUnder128B":100,"avgTouchedBytes":4.56,"maxTouchedBytes":5}; prop* bytes 272.
+
+circuit-turnless-34 (T=36, count=1156): PROP {"total":144,"unique":79,"perDir":[22,22,22,22],"dups":65,"max":5}; STRIDE {"bpe":1,"T4":144,"avgSpan":100,"max":144,"<64B%":16.7,"<128B%":66.7,"touchedAvg":9.44,"max":14}; prop* 1792 B.
+
+rooms-30 (T=28, count=900, per=false): PROP {"total":112,"unique":61,"perDir":[16,16,16,16],"dups":51,"max":16}; STRIDE {"bpe":1,"T4":112,"avgSpan":61.5,"max":96,"<64%":54.5,"<128%":100,"touchedAvg":4.04,"max":8}; prop* 788 B.
+
+(Also confirmed lists built sorted ascending t2 from dense scan in simple-tiled-model.ts; bpe=1 for all via H23 maxPropLen logic.)
+
+**Fresh candidates minted + honest classification (only these; no noise):**
+
+- **Compatible layout transpose (prompted angle; first-principles on access pattern + TRIZ "another dimension")**: Current layout `compatible[i*T4 + t*4 + d]` (cell-major, t outer within cell). Prop inner: for fixed d (from neighbor), varying t2 (from prop list for (d,t1)): cidx stride = 4*bpe (now 4B). Data: cell blocks tiny (36/144/112 B); with sorted lists + short fanout, avg address span of touched t2s 31/100/61.5 B (knots always 1 line; circuit avg 1.5 lines; 17–100% of lists fit 64 B). Touched actual 4–9 B per list iter. H31 already makes cross-cell (i2) accesses neighbor-local (good spatial). Ban path writes 4 consecutive dirs for fixed t (stride-1 friendly in current). Transpose to d-major would give inner t2 stride-1 but strided dir writes in ban + full audit of clear/H10/init math. Given L1 residency + short lists + predictable + prior prop micro reverts, plausible real win <5% (likely noise/symmetric). MARGINAL. Classified **REJECTED** (H36). (If spans were 200+ B or long lists or random t2, would have been different; data says no.)
+
+- **Propagator-CSR dedup (prompted; TRIZ Merging + FP "don't duplicate immutable data")**: Data shows real dups from symmetry (knots 36→8 unique ~78% slots redundant; circuit ~45%; rooms ~46%, max dup 16 in rooms). Mechanism: during build, canonicalize identical list contents, concat only uniques to propData, point multiple propStart[k] at same offset. Preserves order within list + overall concat order for byte-id. Payoff: memory shrink of propData portion (e.g. circuit ~1.7 KB total prop* → perhaps 0.9 KB). Speed: repeated list loads might hit shared cache lines better for inner t2=propData[...] reads (the 85% wall). Honest: post H26 narrow, propData is 272–1792 bytes (<< 64 B line; already fully resident for whole run). Save <1 KB absolute vs 400–659 KB fp. Inner access pattern (short increasing t2) unchanged in character. Similar to H9/H33 (sub-micro, below noise). MARGINAL. **REJECTED** (H34). Worth a 4c polish note for "minimal representation" if mem ever prioritized.
+
+- **observed[] → Uint8 (T<256) (prompted; FP "pay only for used range")**: observed Int32Array(count) stores final pattern ids (0 ≤ t < T < 256) or −1. Narrow to Uint8 (or Int8 with sentinel 0xFF) possible. Writes only in final collapse loop + stepRun progressive + H10 snap; read only by result() and external viz. Excluded from footprint gate intentionally. Circuit saves ~3.5 KB. No reads in hot path (wave + sumsOfOnes used instead). No speed effect. Absolute size vs total negligible; below any gate threshold. MARGINAL. **REJECTED** (H35) — or future Phase-4c micro if API allows changing result() return type or exposing view.
+
+- **Other angles surfaced + assessed (no rubber-stamp):**
+  - Drop distribution Float64(T)? Observe (3–12% per profile) ALWAYS builds dist[t] = wave? weights[t] : 0 then weightedPick, even under MRV (cell choice is MRV; pattern choice within cell is still weighted for correct distribution). Cannot drop. REJECTED.
+  - Bitset reformulation of supports (wave bitset + on-ban mask neighbors)? Tier-2; changes AC-4 to something else; for T=36 fanout<15, bit ops + wider loads likely higher const than current --/===0 on narrowed Uint8. History of AC-4 rewrites (H15) lost. REJECTED.
+  - Fuse wave + sumsOfOnes or drop wave under MRV? Observe still needs the live mask to build dist + to selective-ban non-chosen. Wave is already Uint8(count*T) minimal. REJECTED.
+  - Pack 4 dirs for (i,t) into nibbles/bytes (TRIZ segmentation)? For maxPropLen<16 (circuit 14) could pack 4×4-bit into u16 per t (half size for compat). But inner becomes read-modify-write with shifts/masks per decr (high volume 85% path). Cache-narrow history (H23 etc) won only when *no extra arithmetic* (pure smaller loads). Adding ops per inner iter likely regresses speed > mem win (~20 KB circuit for compat). REJECTED.
+  - General "best in world" API sugar (auto-heuristic, facade)? Polish for 4c, not perf ratchet candidate. Not added as H.
+
+**Classification rigor:** Only added rows for candidates with concrete mechanism + data-grounded verdict. Refused to mint "maybe on other tilesets" or "in theory less work". All three prompted angles + extras classified MARGINAL/REJECTED because either absolute delta too small post-prior wins, or would add work/branches in the exact path proven expensive by reverts, or change layout for <1-line spans that are already hot. No candidate met >5–10% plausible real win on speed (priority) or mem (now dominated by wave+compat which are already minimal).
+
+**Recommendation (per task return spec):** There is NO HIGH-PAYOFF fresh candidate to implement next. The AC-4 ratchet is genuinely at exhaustion for plain JS/TS portable implementation. No >5-10% lever remains on any axis without (a) changing the algorithm (out of scope) or (b) introducing overhead that history shows will be reverted. Orchestrator should conclude Round 3 (final summary + loop stop via loop_control), then move to open-source finish (Phase 4c: visualizer, learning guide, README, benchmarks publication, perhaps "how we beat the refs" post). Forcing more iterations for count would produce H33-like noise only. Honest data says stop.
+
+**Cost of this iter:** read creative-ideation + methods (TRIZ/FP/biomimicry/anti-slop) + full log + code for layouts + build dup/stride instrument (model.ts only) + run on 3 inputs + analyze (no fab) + classify + edit README + append this section to LOG + rm temp + git checkout -- model.ts (clean) + commit (docs) + final verify ~60 min wall. All numbers from harness or the exact instrumentation run; profile % from prior committed log entry.
+
+(End of Round 3 ideation.)
+
