@@ -89,9 +89,11 @@
 //
 // H26 (prior): apply identical cache-narrow to propData (READ in inner t2=propData[start+l] loop),
 //   propLen, (optionally propStart). No underflow arithmetic on ids (pure reads); auto by T.
-// H27 (this): narrow propagation stack (stackT by T, stackI/dirty by count) + dirty list.
+// H27 (prior): narrow propagation stack (stackT by T, stackI/dirty by count) + dirty list.
 //   ~3× smaller stack family (Uint8+2×Uint16 vs 3×Int32). Memory win primary; pop in propagate
 //   gets marginal cache benefit (one read/iter). Stack empty at H10 snapshot. Tier-1 (ids same).
+// H28 (this): narrow sumsOfOnes/sumsOfOnes0 (MRV counts ≤T<256→Uint8). Completes
+//   ideation-2 set (H23/26/27/28). Heap prio reads (not prop inner); tiny mem win if no-reg. Tier-1.
 //
 // PRNG: mulberry32, same as the reference (deterministic contract).
 
@@ -177,7 +179,9 @@ export abstract class Model {
   protected weightLogWeights: Float64Array = new Float64Array(0);
   protected distribution: Float64Array = new Float64Array(0);
 
-  protected sumsOfOnes: Int32Array = new Int32Array(0);
+  // H28: auto-narrowed (by T<256→Uint8 exact) like H23 compatible / H26 prop / H27 stack.
+  // MRV key (H22). Monotonic decr T	o0; never underflows below 0 (ban only on live).
+  protected sumsOfOnes: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
   protected sumsOfWeights: Float64Array = new Float64Array(0);
   protected sumsOfWeightLogWeights: Float64Array = new Float64Array(0);
   protected entropies: Float64Array = new Float64Array(0);
@@ -213,6 +217,13 @@ export abstract class Model {
   protected StackICtor: Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
   protected DirtyHeapCellsCtor: Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
 
+  // H28: chosen narrow ctor for sumsOfOnes (live counts ≤T) + sumsOfOnes0 snapshot.
+  // Mirror H23/H26/H27: T<256 → Uint8Array (exact for knots/circuit/rooms); else Uint16/Int32.
+  // Stored for alloc in init() + reports. .byteLength auto for fp. Tier-1 (completes
+  // ideation-2 narrowing set). Read as heap prio (H22 MRV); decr in ban; <=1 checks;
+  // .set() restore/capture. Heap itself keeps Float64 prios.
+  protected SumsOfOnesCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor = Int32Array;
+
   // H10: cached post-clear fixpoint state (wave + compatible + sums + entropies + observed)
   // after boundary bans + initial propagate (the maximally-pruned start state for this
   // grid+tileset). Restored via .set() in clear(); captured once after first full clear.
@@ -220,7 +231,8 @@ export abstract class Model {
   protected wave0: Uint8Array = new Uint8Array(0);
   // H23: same auto-narrowed type as the live compatible (chosen at init).
   protected compatible0: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
-  protected sumsOfOnes0: Int32Array = new Int32Array(0);
+  // H28: same auto-narrowed type as live sumsOfOnes (chosen at init by T).
+  protected sumsOfOnes0: Uint8Array | Uint16Array | Int32Array = new Int32Array(0);
   protected sumsOfWeights0: Float64Array = new Float64Array(0);
   protected sumsOfWeightLogWeights0: Float64Array = new Float64Array(0);
   protected entropies0: Float64Array = new Float64Array(0);
@@ -281,6 +293,15 @@ export abstract class Model {
       this.DirtyHeapCellsCtor = count < 65536 ? Uint16Array : Int32Array;
     }
 
+    // H28: auto-select narrowest for sumsOfOnes (live option counts ≤T) + sumsOfOnes0.
+    // T<256 → Uint8Array (exact, all committed tilesets); <65536→Uint16 else Int32.
+    // Mirrors H23/H26/H27 exactly. Monotonic decr never <0. Affects live + H10 snapshot.
+    // Read for heap prio in nextUnobs/flush; decr in ban; init= T; .set() copies; <=1 tests.
+    // Tiny array (~count*1B); marginal read cost (heap not prop inner); free mem if no-reg.
+    {
+      this.SumsOfOnesCtor = T < 256 ? Uint8Array : T < 65536 ? Uint16Array : Int32Array;
+    }
+
     // wave: all 1 (everything possible). compatible: filled by clear().
     this.wave = new Uint8Array(count * T); // zeroed; clear() sets the valid cells to 1
     this.compatible = new this.CompatibleCtor(count * T4);
@@ -299,7 +320,7 @@ export abstract class Model {
     }
     this.startingEntropy = Math.log(this.sumOfWeights) - this.sumOfWeightLogWeights / this.sumOfWeights;
 
-    this.sumsOfOnes = new Int32Array(count);
+    this.sumsOfOnes = new this.SumsOfOnesCtor(count);
     this.sumsOfWeights = new Float64Array(count);
     this.sumsOfWeightLogWeights = new Float64Array(count);
     this.entropies = new Float64Array(count);
@@ -320,7 +341,7 @@ export abstract class Model {
     // H10 snapshot buffers (same size as live; populated at end of first clear)
     this.wave0 = new Uint8Array(count * T);
     this.compatible0 = new this.CompatibleCtor(count * T4);
-    this.sumsOfOnes0 = new Int32Array(count);
+    this.sumsOfOnes0 = new this.SumsOfOnesCtor(count);
     this.sumsOfWeights0 = new Float64Array(count);
     this.sumsOfWeightLogWeights0 = new Float64Array(count);
     this.entropies0 = new Float64Array(count);

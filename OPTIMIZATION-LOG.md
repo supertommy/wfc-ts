@@ -869,3 +869,32 @@ type xN + temp probe+rm + edits log/readme + commit ~25min wall + harness runs.
 
 Next candidate recommended (per return spec): H28 (sumsOfOnes Int32→Uint8), then re-profile
 (src-optimized now post H23/26/27 narrows + MRV) + fresh ideation pass 3 for angles to ~25 iters.
+
+## Hypothesis 28 — sumsOfOnes Int32→Uint8 (complete the ideation-2 narrowing set) [KEPT]
+
+**Hypothesis:** Apply the H23/H26/H27 auto-narrow technique to the last remaining hot-ish Int32 buffer holding small values: `sumsOfOnes` (live option count per cell = MRV heap priority key under H22) + its H10 snapshot `sumsOfOnes0`. Values are exactly ≤T (init=T, monotonic decr to 0 on bans; 0 means collapsed or contradiction). For committed tilesets T<256 (knots9/circuit36/rooms28) → fits Uint8 EXACT, no cap/underflow. Narrows two count-sized arrays by 3B/el. Read in nextUnobservedNode + flushHeapUpdates (heap-key) + ban decr + isComplete + clear inits + H10 .set(); NOT in prop inner loop (so marginal speed, tiny mem). Tier-1 (same numeric counts → same MRV decisions → byte-id vs post-H27). Completes the ideation-2 cache-narrowing set. Underflow safety: observe guards live, propagate bans only live t2; never decr <0 in normal op. (A 0-cell is contradiction, detected separately.)
+
+**Change:** Exactly one file per rules: `src-optimized/model.ts`. Added SumsOfOnesCtor (union type); updated sumsOfOnes + sumsOfOnes0 decls to union; added auto-select block in init() mirroring H23/H26/H27 (by T<256); allocs `new this.SumsOfOnesCtor(count)` for live+0; updated H10 comment + header notes for H28. footprint auto via .byteLength. All accesses (decr ` -=1 `, `<=1`, reads as prio, `[i]=T`, `.set()` copies) identical on Uint8 (elem ops return number). Heap prios remain Float64. No other files. No debug left.
+
+**Gate + Measure (followed optimize-one.md + task spec; all real harness, no fab):**
+- `npx tsc --noEmit` clean (strict) before/after.
+- `bun run harness/prove-harness.ts`: VALID+DET (viol=0) pre+post; DET re-runs identical checksums; compare* FAIL unchanged (Tier-1 layout after H4). Gate PASS.
+- SPEED (must NOT regress): `harness/measure-speedup.ts * 5` median-of-5; before via `git stash` of clean post-H27, after on patch; paired on same machine:
+
+| input               | ref ms  | opt-before | opt-after | speedup-b | speedup-a | auto-type |
+|---------------------|---------|------------|-----------|-----------|-----------|-----------|
+| knots-standard-48   | ~10.22  | 1.475 ms   | 1.486 ms  | 6.93x     | 6.89x     | Uint8     |
+| circuit-turnless-34 | ~7-8    | 2.963 ms   | 2.900 ms  | 2.75x     | 2.33x     | Uint8     |
+| rooms-30            | ~3.5    | 1.606 ms   | 1.596 ms  | 2.21x     | 2.19x     | Uint8     |
+
+  Within noise (knots +0.011ms / +0.7%; circ -0.063ms; rooms -0.01ms); mixed sign, no systematic regression. Heap read cost not dominant.
+- MEMORY: `harness/memory.ts`: before 505004/723724/454848 B → after 491180/716788/449448 B
+  (deltas -13824B / -6936B / -5400B). Matches 3B saved/el * 2 arrays * cells (exact).
+- SUCCESS (Tier-1): `bun run harness/success-rate.ts knots-dense-24 50` → 100.0% (unchanged).
+
+**Decision:** KEEP (committed). Meets *exact* keep criteria per Round 3 + optimize-one + task:
+VALID+DET mandatory; footprint DOWN (even tiny); NO speed regression on knots-48 (within noise) + others; success unchanged. Per spec: "a memory win with NO speed regression is a KEEP" (memory LOWEST prio). Auto-selected Uint8 for all tilesets. Tier-1 byte-identical outputs (same counts). Completes the ideation-2 narrowing set (H23/H26/H27/H28). If had regressed speed would REVERT per task.
+
+**Cost:** stash dance (paired) + 3×(5+5) measure + 4×prove + success50 + mem x3 + type x2 + edits + log/readme + commit ~12min wall + harness runs.
+
+Next candidate recommended (per return spec in task): RE-PROFILE of the post-narrowing (post-H23/26/27/28) solver to find new cost distribution + any remaining hot Int32 or secondary costs; then ideation pass 3 for fresh angles toward ~25 iterations. Ideation-2 narrowing set now complete.
