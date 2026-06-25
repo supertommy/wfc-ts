@@ -39,6 +39,16 @@
 //   and not a regression; gate is only VALID + DET. Ported pattern from
 //   references/three-wfc/lib/WFCMinHeap.ts .
 //
+// HYPOTHESIS 6: reduce heap decrease-key cost on ban path via batching.
+//
+//   Ban is now #2 cost (26-31%). Every ban did an immediate O(log) update/remove.
+//   Especially costly on large-T (circuit T=36, ~40k bans/run). Batch: ban only
+//   appends cell to a dirty list (no sift). Flush (coalesced via gen#) runs once
+//   before each extract-min: only distinct dirtied cells since last observe pay
+//   the sift. Observe (T-1 bans to 1 cell) and per-wave bans now cost O(1) heap
+//   ops. Flush before pop keeps selection semantics identical (no mid-batch extract).
+//   Tier-2 (same as H4) but in practice preserves collapse order vs pre-H6.
+//
 // PRNG: mulberry32, same as the reference (deterministic contract).
 
 import { mulberry32, type Random } from "./prng.js";
@@ -93,6 +103,13 @@ export abstract class Model {
   // Rebuilt in clear(); updated via ban().
   protected entropyHeap: EntropyHeap | null = null;
 
+  // H6: batching for heap updates (coalesce per-cell bans into one decrease-key/remove per phase)
+  // Dirty list populated in ban(); flushed (with dedup) in nextUnobservedNode before extract.
+  protected dirtyHeapCells: Int32Array = new Int32Array(0);
+  protected dirtyCount = 0;
+  protected heapUpdateGen: Uint32Array = new Uint32Array(0);
+  protected heapGen = 0;
+
   protected sumOfWeights = 0;
   protected sumOfWeightLogWeights = 0;
   protected startingEntropy = 0;
@@ -143,6 +160,12 @@ export abstract class Model {
     this.stackI = new Int32Array(stackCap);
     this.stackT = new Int32Array(stackCap);
     this.stacksize = 0;
+
+    // H6 batch dirty list (reused cap sufficient; distinct dirtied << bans per phase)
+    this.dirtyHeapCells = new Int32Array(stackCap);
+    this.dirtyCount = 0;
+    this.heapUpdateGen = new Uint32Array(count);
+    this.heapGen = 0;
   }
 
   run(seed: number, limit: number): boolean {
@@ -192,6 +215,8 @@ export abstract class Model {
     // H4: O(log n) via heap. Lazy deletion for collapsed/stale entries.
     // Deterministic: no noise; on equal priority, lower cell index wins.
     // (PRNG is no longer consumed here; only in observe weightedPick.)
+    // H6: flush batched updates first so the min reflects all bans since prior extract.
+    this.flushHeapUpdates();
     const heap = this.entropyHeap;
     if (!heap) return -1;
     const { sumsOfOnes, entropies } = this;
@@ -275,19 +300,48 @@ export abstract class Model {
     const sum = this.sumsOfWeights[i];
     this.entropies[i] = Math.log(sum) - this.sumsOfWeightLogWeights[i] / sum;
 
-    // H4: on entropy/count change, decrease-key; on collapse to 1 (or 0), remove.
-    // During observe's progressive bans on same cell, intermediate may re-push (harmless).
+    // H6: mark cell dirty for *batched* heap update (coalesces multiple bans to same cell
+    // into a single decrease-key/remove). No per-ban sift cost. Flush applies before next extract.
+    // (See flushHeapUpdates + nextUnobservedNode.)
     const h = this.entropyHeap;
     if (h) {
-      if (this.sumsOfOnes[i] <= 1) {
+      this.dirtyHeapCells[this.dirtyCount++] = i;
+    }
+  }
+
+  /**
+   * H6: flush all dirtied cells to the heap with coalesced update/remove.
+   * Called before extract-min so that selection sees up-to-date priorities.
+   * Dedups via heapGen so a cell banned N times since last flush pays only 1 sift.
+   */
+  private flushHeapUpdates(): void {
+    const h = this.entropyHeap;
+    if (!h || this.dirtyCount === 0) return;
+
+    this.heapGen = (this.heapGen + 1) | 0;
+    if (this.heapGen === 0) {
+      this.heapGen = 1;
+      this.heapUpdateGen.fill(0);
+    }
+    const g = this.heapGen;
+    const gens = this.heapUpdateGen;
+    const { sumsOfOnes, entropies, heuristic } = this;
+
+    for (let k = 0; k < this.dirtyCount; k++) {
+      const i = this.dirtyHeapCells[k];
+      if (gens[i] === g) continue; // coalesced
+      gens[i] = g;
+
+      if (sumsOfOnes[i] <= 1) {
         h.remove(i);
       } else {
-        const prio = (this.heuristic === Heuristic.Entropy ? this.entropies[i] : this.sumsOfOnes[i]);
+        const prio = (heuristic === Heuristic.Entropy ? entropies[i] : sumsOfOnes[i]);
         if (!h.update(i, prio)) {
           h.push(i, prio);
         }
       }
     }
+    this.dirtyCount = 0;
   }
 
   protected clear(): void {
@@ -352,6 +406,7 @@ export abstract class Model {
     // H4: after all initial bans + any propagate from them, build the heap
     // containing exactly the cells eligible for selection (pass the N-boundary
     // filter) that still have sumsOfOnes > 1. Uses current entropies (or counts).
+    // H6: reset batching state after rebuild (fresh snapshot, no dirt ies).
     const h = this.entropyHeap;
     if (h) {
       h.clear();
@@ -364,6 +419,9 @@ export abstract class Model {
         }
       }
     }
+    this.dirtyCount = 0;
+    if (this.heapUpdateGen.length) this.heapUpdateGen.fill(0);
+    this.heapGen = 0;
   }
 
   result(): Int32Array {
