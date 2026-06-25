@@ -1552,3 +1552,39 @@ Verdict: reject as a performance path. The command-chunk rewrite is correct and 
 Learning: optimizing propagation-layer submission is below the real bottleneck. The next candidate must remove the per-observe banned-log readback / CPU mirror dependency by keeping selection, observe, and propagation state together on the GPU for multiple observes, or by changing the algorithm to a bulk relaxation form whose state need not return to CPU after each observe.
 
 Next ratchet hypothesis: no-spin full-GPU observe chunks. Prototype GPU-owned N-observe chunks with conservative over-drain between observes, then return to CPU only at chunk boundaries for validation/restart. If correctness cannot be maintained without proving frontier-empty per observe, reject and move to bulk relaxation/fixed-point epochs.
+
+### GPU ratchet iteration 3 — no-spin full-GPU observe chunks
+
+Hypothesis: move selection and observe onto the GPU for an entire run/chunk without spin barriers. Encode a command-ordered sequence of `select -> weighted observe -> K fixed propagation layers`, repeat for `count` observes, then perform one final readback. This removes the Stage 2/iteration-2 per-observe banned-log and frontier-count readbacks. Correctness depends on K being a conservative enough propagation epoch between observes.
+
+Added `scripts/webgpu-no-spin-chunk-proto.ts`:
+- Script-local research prototype; not imported by library code.
+- Reuses the lockstep-proven WGSL kernels from `scripts/debug-gpu-lockstep.ts` by extracting their WGSL strings at runtime.
+- Uses command ordering only: no persistent kernel, no cross-workgroup spin barrier, no per-observe CPU readback.
+- One final readback of `wave` + `sums`; observed cells with `sum != 1` are treated as unresolved.
+- Measures determinism by running the same GPU command sequence twice and comparing final observed output.
+
+Verification:
+
+```text
+bun run typecheck
+PASS
+
+bun run scripts/webgpu-no-spin-chunk-proto.ts
+case                | epoch | JS ms  | GPU ms  | speedup | valid | det  | violations | unresolved | dispatches | submits
+--------------------|-------|--------|---------|---------|-------|------|------------|------------|------------|--------
+circuit-turnless-8  |     8 |   2.31 |   40.47 |   0.057x | PASS | PASS |          0 |          0 |        704 |      1
+circuit-turnless-8  |    16 |   2.31 |   51.94 |   0.044x | PASS | PASS |          0 |          0 |       1216 |      1
+circuit-turnless-8  |    32 |   2.31 |  100.51 |   0.023x | PASS | PASS |          0 |          0 |       2240 |      1
+circuit-turnless-16 |    16 |   2.36 |  217.05 |   0.011x | PASS | PASS |          0 |          0 |       4864 |      1
+circuit-turnless-16 |    32 |   2.36 |  384.19 |   0.006x | PASS | PASS |          0 |          0 |       8960 |      1
+circuit-turnless-16 |    64 |   2.36 |  748.51 |   0.003x | PASS | PASS |          0 |          0 |      17152 |      1
+circuit-turnless-32 |    16 |   6.77 |  681.36 |   0.010x | PASS | PASS |          0 |          0 |      19456 |      1
+circuit-turnless-32 |    32 |   6.77 | 1744.04 |   0.004x | PASS | PASS |          0 |          0 |      35840 |      1
+```
+
+Verdict: reject as a performance path, despite useful correctness evidence. This proves command-ordered no-spin GPU-owned observe chunks can produce valid deterministic outputs on small circuit cases when K is high enough, with only one submit and final readback. But it is far slower than optimized JS and scales with dispatch count: `count * (3 + K)` dispatches. At 32x32,K=16 that is already 19,456 dispatches and 681ms vs JS 6.77ms; at circuit-128,K=16 the same shape would require roughly 311k dispatches before readback. Increasing K improves safety but worsens time. There is still no cheap proof that fixed K is always sufficient, and using a safe global bound (`count*T`) would explode dispatch count.
+
+Learning: collapsing mapAsync/submit boundaries is necessary but not sufficient. The remaining killer is sequential observe structure plus fixed propagation epochs. A GPU path that performs one dispatch per propagation layer per observe is not competitive, even with one queue submit. The next viable branch must change the propagation formulation itself: bulk relaxation/fixed-point epochs that scan the whole grid in coarse passes, or a true GPU frontier compaction/indirect scheme that avoids both spin barriers and `count*K` dispatch trains.
+
+Next ratchet hypothesis: bulk relaxation/fixed-point epochs. Replace the AC-4 worklist with a GPU-friendly full-grid relaxation pass that recomputes unsupported live tiles in parallel and bans them. First test it as a single-propagation backend and then, only if promising, evaluate full-run integration.
