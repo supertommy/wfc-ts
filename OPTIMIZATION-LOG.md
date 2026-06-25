@@ -1509,3 +1509,46 @@ stage2-hybrid-cpu-observe-gpu-prop |  128 |    57.4 |  23599.6 |   0.002x | PASS
 Verdict: the current hybrid remains correct but is an anti-crossover baseline: ~411x slower than optimized JS on circuit-128. The exact instrumentation confirms the problem is not shader arithmetic; it is boundary frequency: 135,970 `writeBuffer` calls, 136,717 queue submits, and 24,381 `mapAsync` readbacks for one full run. Future candidates must collapse these by orders of magnitude before deeper kernel optimization matters.
 
 Next ratchet hypothesis: chunked fixed-epoch no-spin propagation. Test whether batching K propagation dispatches between count readbacks reduces `mapAsync` and submit pressure while preserving VALID+DET. Start from the current hybrid path and ratchet `sampleEvery`/epoch size under this new gate.
+
+### GPU ratchet iteration 2 — chunked fixed-epoch command batches
+
+Hypothesis: the Stage 2 hybrid might recover some performance if propagation layers are encoded in fixed-size chunks. Instead of submitting one command buffer per frontier layer and reading the frontier count every layer/sample point, encode K ping-pong propagation passes into one command buffer, reset the next-frontier count with a GPU-side zero-buffer copy, then read the frontier count once per chunk. This is no-spin and preserves the true fixpoint invariant: if the frontier empties before the chunk ends, later passes are no-op overwork because their input count is zero.
+
+Implementation:
+- Updated optional `src-optimized/webgpu/propagate-gpu.ts` incremental propagation only.
+- Added a reusable zero-word GPU buffer for command-encoded count resets.
+- Batches `sampleEvery` propagation layers per command encoder/submit, then maps the count.
+- Added `propagateEpoch` to optional `GpuWfcRunner` constructor.
+- Extended `scripts/bench-gpu-crossover-gate.ts` with `--epochs=...` so ratchet candidates can sweep fixed epochs under the same gate.
+
+Verification:
+
+```text
+bun run typecheck
+PASS
+
+bun run scripts/gate-gpu-propagate.ts
+OVERALL: PASS
+```
+
+Measurements:
+
+```text
+bun run scripts/bench-gpu-crossover-gate.ts --sizes=64 --epochs=1,8,16,32
+hybrid-fixed-epoch-1  | 64 | JS 21.2 ms | GPU  5968.6 ms | 0.004x | VALID PASS | DET PASS | writeBuffer  8894 | submit 20762 | mapAsync 17798
+hybrid-fixed-epoch-8  | 64 | JS 21.2 ms | GPU 11443.6 ms | 0.002x | VALID PASS | DET PASS | writeBuffer  8894 | submit  9082 | mapAsync  6118
+hybrid-fixed-epoch-16 | 64 | JS 21.2 ms | GPU  4651.2 ms | 0.005x | VALID PASS | DET PASS | writeBuffer  8894 | submit  8901 | mapAsync  5937
+hybrid-fixed-epoch-32 | 64 | JS 21.2 ms | GPU  7041.5 ms | 0.003x | VALID PASS | DET PASS | writeBuffer  8894 | submit  8892 | mapAsync  5928
+
+bun run scripts/bench-gpu-crossover-gate.ts --sizes=128 --epochs=16
+hybrid-fixed-epoch-16 | 128 | JS 55.9 ms | GPU 26168.4 ms | 0.002x | VALID PASS | DET PASS | observes 11816 | writeBuffer 35450 | submit 35451 | mapAsync 23635
+
+bun run scripts/bench-gpu-crossover-gate.ts --sizes=128 --epochs=32
+hybrid-fixed-epoch-32 | 128 | JS 55.0 ms | GPU 36309.9 ms | 0.002x | VALID PASS | DET PASS | observes 11816 | writeBuffer 35450 | submit 35448 | mapAsync 23632
+```
+
+Verdict: reject as a performance path. The command-chunk rewrite is correct and substantially reduces submits/writeBuffer calls versus iteration 1's old baseline (`136717` submits → `35451` at 128), but wall time does not improve. The remaining dominant boundary cost is per-observe state return to the CPU mirror: roughly two `mapAsync` calls per observe remain (frontier count + banned-log), and there are 11,816 observes on circuit-128. Larger epochs reduce count checks slightly but add propagation overwork; K=16 was the best 64x64 point, while K=32 was worse at 128.
+
+Learning: optimizing propagation-layer submission is below the real bottleneck. The next candidate must remove the per-observe banned-log readback / CPU mirror dependency by keeping selection, observe, and propagation state together on the GPU for multiple observes, or by changing the algorithm to a bulk relaxation form whose state need not return to CPU after each observe.
+
+Next ratchet hypothesis: no-spin full-GPU observe chunks. Prototype GPU-owned N-observe chunks with conservative over-drain between observes, then return to CPU only at chunk boundaries for validation/restart. If correctness cannot be maintained without proving frontier-empty per observe, reject and move to bulk relaxation/fixed-point epochs.

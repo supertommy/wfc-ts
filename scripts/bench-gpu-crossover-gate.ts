@@ -5,9 +5,9 @@
  * Purpose: every GPU hypothesis gets measured against the same large-grid bar:
  * VALID + DET, wall time vs optimized JS, and concrete WebGPU boundary crossings.
  *
- * This first version registers the existing Stage 2 hybrid CPU-observe/GPU-propagate
- * runner as the baseline candidate. Future no-spin prototypes should plug into the
- * same shape instead of inventing bespoke measurement scripts.
+ * It can sweep the existing Stage 2 hybrid CPU-observe/GPU-propagate runner across
+ * fixed propagation epoch sizes. Future no-spin prototypes should plug into the same
+ * Candidate shape instead of inventing bespoke measurement scripts.
  *
  * Default run is intentionally one heavy large case (circuit-turnless-128) so the
  * ratchet loop can run frequently. Pass --sizes=128,256 for a wider check.
@@ -44,12 +44,20 @@ interface Candidate {
   run(device: GPUDevice, tileset: Tileset, subset: string | null, size: number, seed: number): Promise<TimedRun>;
 }
 
+function parseNumberList(flag: string, fallback: number[]): number[] {
+  const arg = process.argv.find((a) => a.startsWith(`${flag}=`));
+  if (!arg) return fallback;
+  const values = arg.slice(flag.length + 1).split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0);
+  if (values.length === 0) throw new Error(`${flag} must contain at least one positive integer`);
+  return values;
+}
+
 function parseSizes(): number[] {
-  const arg = process.argv.find((a) => a.startsWith("--sizes="));
-  if (!arg) return [128];
-  const sizes = arg.slice("--sizes=".length).split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0);
-  if (sizes.length === 0) throw new Error("--sizes must contain at least one positive integer");
-  return sizes;
+  return parseNumberList("--sizes", [128]);
+}
+
+function parseEpochs(): number[] {
+  return parseNumberList("--epochs", [8]);
 }
 
 async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -192,25 +200,27 @@ function instrumentDevice<T>(device: GPUDevice, fn: () => Promise<T>): Promise<{
   );
 }
 
-const currentHybrid: Candidate = {
-  name: "stage2-hybrid-cpu-observe-gpu-prop",
-  async run(device, tileset, subset, size, seed) {
-    const runner = new GpuWfcRunner(device, tileset, subset, size, size, true);
-    const { result, metrics } = await instrumentDevice(device, async () => {
-      const t0 = performance.now();
-      const ok = await runner.run(seed, -1, 100);
-      const ms = performance.now() - t0;
-      return {
-        ok,
-        ms,
-        observed: runner.result(),
-        observes: runner.lastRunObserves,
-        attempts: runner.lastRunAttempts,
-      } satisfies TimedRun;
-    });
-    return { ...result, metrics };
-  },
-};
+function makeHybridCandidate(epoch: number): Candidate {
+  return {
+    name: `hybrid-fixed-epoch-${epoch}`,
+    async run(device, tileset, subset, size, seed) {
+      const runner = new GpuWfcRunner(device, tileset, subset, size, size, true, epoch);
+      const { result, metrics } = await instrumentDevice(device, async () => {
+        const t0 = performance.now();
+        const ok = await runner.run(seed, -1, 100);
+        const ms = performance.now() - t0;
+        return {
+          ok,
+          ms,
+          observed: runner.result(),
+          observes: runner.lastRunObserves,
+          attempts: runner.lastRunAttempts,
+        } satisfies TimedRun;
+      });
+      return { ...result, metrics };
+    },
+  };
+}
 
 async function detCheck(candidate: Candidate, device: GPUDevice, tileset: Tileset, subset: string | null, size: number, seed: number): Promise<boolean> {
   const a = await candidate.run(device, tileset, subset, size, seed);
@@ -227,11 +237,12 @@ async function main(): Promise<void> {
   const circuitXml = readFileSync(new URL("../performance-test/tilesets/Circuit.xml", import.meta.url), "utf8");
   const circuit = parseTileset(circuitXml, "Circuit");
   const sizes = parseSizes();
+  const epochs = parseEpochs();
   const seeds = new Map<number, number>([[64, 0], [128, 1], [256, 2], [512, 3]]);
-  const candidates: Candidate[] = [currentHybrid];
+  const candidates: Candidate[] = epochs.map(makeHybridCandidate);
 
   console.log("=== WEBGPU LARGE-GRID CROSSOVER GATE ===");
-  console.log(`cases: circuit-turnless sizes=${sizes.join(",")} periodic=true`);
+  console.log(`cases: circuit-turnless sizes=${sizes.join(",")} epochs=${epochs.join(",")} periodic=true`);
   console.log("candidate                         | size | JS ms   | GPU ms   | speedup | valid | det  | observes | writeBuffer | submit | mapAsync");
   console.log("----------------------------------|------|---------|----------|---------|-------|------|----------|-------------|--------|---------");
 

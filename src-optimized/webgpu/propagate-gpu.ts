@@ -179,6 +179,9 @@ export class GpuPropagator {
   private readonly applyPipeline: GPUComputePipeline;
   private readonly applyParamsBuf: GPUBuffer;
 
+  // Reusable zero word for command-encoded frontier count resets inside a chunk.
+  private readonly zeroBuf: GPUBuffer;
+
   private readonly workBufSize: number;
   private readonly maxWorkgroups: number;
 
@@ -297,6 +300,14 @@ export class GpuPropagator {
       size: this.workBufSize,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
+
+    this.zeroBuf = device.createBuffer({
+      size: 4,
+      usage: GPUBufferUsage.COPY_SRC,
+      mappedAtCreation: true,
+    });
+    new Uint32Array(this.zeroBuf.getMappedRange()).set([0]);
+    this.zeroBuf.unmap();
 
     // Pipeline (created once)
     const shaderModule = device.createShaderModule({ code: FUSED_WGSL });
@@ -539,50 +550,51 @@ export class GpuPropagator {
     const maxWgs = this.maxWorkgroups;
     const maxSteps = this.maxCascadeSteps;
 
-    // 3. Cascade loop with early stop on empty worklist
+    // 3. Cascade loop with fixed-epoch command chunks. Each chunk submits up to
+    // sampleEvery propagation layers and then reads back the produced frontier
+    // count. If the frontier goes empty before the chunk ends, the remaining
+    // dispatches are harmless no-op overwork: the kernel exits immediately when
+    // curBanned[0] is zero, and the ping-pong buffers keep carrying zero.
+    const epoch = Math.max(1, sampleEvery | 0);
     let curCount = nInit;
-    for (let it = 0; it < maxSteps; it++) {
-      if (curCount === 0) break; // previous check
-      device.queue.writeBuffer(nxtBuf, 0, new Uint32Array([0]));
-
+    let it = 0;
+    while (curCount !== 0 && it < maxSteps) {
+      const steps = Math.min(epoch, maxSteps - it);
       const enc = device.createCommandEncoder();
-      const bind = device.createBindGroup({
-        layout: this.pipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: { buffer: waveBuf } },
-          { binding: 1, resource: { buffer: compatBuf } },
-          { binding: 2, resource: { buffer: curBuf } },
-          { binding: 3, resource: { buffer: nxtBuf } },
-          { binding: 4, resource: { buffer: this.propDataBuf } },
-          { binding: 5, resource: { buffer: this.propMetaBuf } },
-          { binding: 6, resource: { buffer: this.neighborsBuf } },
-          { binding: 7, resource: { buffer: this.paramsBuf } },
-          { binding: 8, resource: { buffer: this.bannedLog } },
-        ],
-      });
-      const pass = enc.beginComputePass();
-      pass.setPipeline(this.pipeline);
-      pass.setBindGroup(0, bind);
-      pass.dispatchWorkgroups(maxWgs);
-      pass.end();
-      device.queue.submit([enc.finish()]);
 
-      const tmp = curBuf;
-      curBuf = nxtBuf;
-      nxtBuf = tmp;
+      for (let step = 0; step < steps; step++) {
+        enc.copyBufferToBuffer(this.zeroBuf, 0, nxtBuf, 0, 4);
+        const bind = device.createBindGroup({
+          layout: this.pipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: waveBuf } },
+            { binding: 1, resource: { buffer: compatBuf } },
+            { binding: 2, resource: { buffer: curBuf } },
+            { binding: 3, resource: { buffer: nxtBuf } },
+            { binding: 4, resource: { buffer: this.propDataBuf } },
+            { binding: 5, resource: { buffer: this.propMetaBuf } },
+            { binding: 6, resource: { buffer: this.neighborsBuf } },
+            { binding: 7, resource: { buffer: this.paramsBuf } },
+            { binding: 8, resource: { buffer: this.bannedLog } },
+          ],
+        });
+        const pass = enc.beginComputePass();
+        pass.setPipeline(this.pipeline);
+        pass.setBindGroup(0, bind);
+        pass.dispatchWorkgroups(maxWgs);
+        pass.end();
 
-      // sample the *new* cur count (produced by this dispatch)
-      if ((it + 1) % sampleEvery === 0 || (it + 1) === maxSteps) {
-        const encCheck = device.createCommandEncoder();
-        encCheck.copyBufferToBuffer(curBuf, 0, this.countReadback, 0, 4);
-        device.queue.submit([encCheck.finish()]);
-        await this.countReadback.mapAsync(GPUMapMode.READ);
-        curCount = new Uint32Array(this.countReadback.getMappedRange())[0] >>> 0;
-        this.countReadback.unmap();
-        if (curCount === 0) {
-          break;
-        }
+        const tmp = curBuf;
+        curBuf = nxtBuf;
+        nxtBuf = tmp;
       }
+
+      enc.copyBufferToBuffer(curBuf, 0, this.countReadback, 0, 4);
+      device.queue.submit([enc.finish()]);
+      await this.countReadback.mapAsync(GPUMapMode.READ);
+      curCount = new Uint32Array(this.countReadback.getMappedRange())[0] >>> 0;
+      this.countReadback.unmap();
+      it += steps;
     }
     if (curCount !== 0) {
       throw new Error(`GPU incremental propagation did not drain within ${maxSteps} cascade steps (frontier=${curCount})`);

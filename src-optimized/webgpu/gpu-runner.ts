@@ -84,12 +84,13 @@ export class GpuWfcRunner {
 
   private random: Random | null = null;
   private observed: Int32Array;
+  private readonly propagateEpoch: number;
 
   // stats for measurement (internal, no side effects on hot path)
   private _lastRunObserves = 0;
   private _lastRunAttempts = 0;
 
-  constructor(device: GPUDevice, tileset: Tileset, subsetName: string | null, width: number, height: number, periodic: boolean) {
+  constructor(device: GPUDevice, tileset: Tileset, subsetName: string | null, width: number, height: number, periodic: boolean, propagateEpoch = 8) {
     this.exposed = new Exposed({
       tileset,
       subsetName: subsetName ?? null,
@@ -126,6 +127,7 @@ export class GpuWfcRunner {
     this.buckets = new BucketPQ(this.count, this.T);
     this.weights = new Float64Array(this.exposed.weights_);
     this.observed = new Int32Array(this.count);
+    this.propagateEpoch = Math.max(1, propagateEpoch | 0);
   }
 
   /** Returns last run's observe count (for diagnostics). */
@@ -155,7 +157,7 @@ export class GpuWfcRunner {
           const seedBans = this.observe(node);
           this._lastRunObserves++;
 
-          const propRes = await this.propagator.propagateIncremental(seedBans, /*sampleEvery*/ 8);
+          const propRes = await this.propagator.propagateIncremental(seedBans, this.propagateEpoch);
           this.applyBans(propRes.newlyBanned);
 
           if (this.cpuSums[0] <= 0) {
