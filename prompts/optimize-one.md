@@ -65,16 +65,33 @@ requires evidence. Never assert an unmeasured performance result.
 3. **Implement** that ONE change in `src-optimized/` only.
 4. **Gate**, in order. A failure at any gate = fix it, or REVERT before measuring:
    - `bun run typecheck` — must be clean.
-   - `bun run harness/prove-harness.ts` — VALID and DET must hold.
-5. **Measure** — the median-of-5 speedup on the three meaningful inputs
-   (knots-standard-48, circuit-turnless-34, rooms-30) is in the prove-harness
-   output. (Sub-ms inputs pass gates but don't headline.)
-6. **Keep or revert:**
-   - **KEEP** if gates pass AND (measurably faster on at least one meaningful
-     input with no regression on the others, OR a pure simplification, OR an
-     enabling transform with a NAMED follow-on you will attempt next). On keep:
-     `git add -A && git commit -m "Hypothesis N: <one-line>"` immediately.
+   - `bun run harness/prove-harness.ts` — VALID and DET must hold (or, for
+     success-rate candidates that change the run contract, the new deterministic
+     contract: same (seed, budget) → same output — verify by re-running).
+5. **Measure by axis.** Pick the metric that matches the candidate's target axis
+   (priority SPEED > success-rate > memory):
+   - SPEED (primary): `bun run harness/measure-speedup.ts <input> 5` (median-of-5)
+     on knots-standard-48, circuit-turnless-34, rooms-30.
+   - SUCCESS: `bun run harness/success-rate.ts <input> [N=100]` — completion
+     rate over N seeds, ref vs opt. Use the hard input(s) (knots-dense-24).
+   - MEMORY: `bun run harness/memory.ts [input]` — optimized footprint bytes.
+6. **Keep or revert (priority speed > success > memory):**
+   - SPEED candidate: **KEEP** if VALID+DET AND measurably faster (above noise)
+     on the target input(s) AND knots-48 does not regress. **Memory growth is
+     ACCEPTABLE — do NOT reject a speed win for using more memory.**
+   - SUCCESS candidate: **KEEP** if completion rate rises on the hard input(s)
+     AND speed does not regress meaningfully (speed outranks success: don't
+     tank speed for success). New-contract determinism must hold.
+   - MEMORY candidate: **KEEP** only if footprint down AND NO speed regression
+     (memory is lowest priority; a memory win that costs speed is REVERTED).
+   - On keep: `git add -A && git commit -m "Hypothesis N: <one-line>"` immediately.
    - **REVERT** (`git checkout -- src-optimized/`) if it regressed or broke a gate.
+
+**Round 3 hard constraints (apply to every change):** plain JS/TS only — NO WASM,
+no native addons. WebGPU allowed only as an OPTIONAL path with a portable plain-
+JS fallback that stays working in Node AND browser. Solver core stays Node+
+browser-portable (no Node-only APIs in the hot path). Typed arrays/ArrayBuffers
+encouraged. Workers only if isomorphic Node+browser (default single-threaded).
 7. **Log.** Append to `OPTIMIZATION-LOG.md`:
    - `## Hypothesis N — <title> [KEPT|REVERTED]`
    - Hypothesis (one sentence), Change (what you did, which files),
@@ -101,7 +118,27 @@ requires evidence. Never assert an unmeasured performance result.
 
 ## Exit criteria (for the orchestrating loop, not you)
 
-The loop stops when the speedup target (recorded in `src-optimized/README.md`)
-is reached on all meaningful inputs with gates passing, OR every candidate is
-marked KEPT/REVERTED/REJECTED. You just do one iteration; the orchestrator
-decides stop/continue.
+The loop stops when the Round 3 target (recorded in `src-optimized/README.md`)
+is met on all axes with gates passing, OR every candidate is
+marked KEPT/REVERTED/REJECTED AND a fresh ideation pass yields no new high-
+payoff candidate. Filing-stall is NOT a stop — it triggers the STALL→IDEATE
+branch (below); only ideation-yields-nothing stops the loop.
+
+## STALL→IDEATE (when filing stalls or a wall is confirmed)
+
+When the candidate list is exhausted of same-algorithm filings, OR a re-profile
+confirms a dominant cost that micro-filing can't touch (an algorithmic wall),
+DO NOT declare exhaustion. Instead run a creative-ideation pass to mint frame-
+breaking candidates, and continue the loop:
+- **TRIZ** (Altshuller) when the barrier is a parameter conflict (speed vs
+  memory vs success-rate): state the contradiction, translate inventive
+  principles to concrete WFC mechanisms, compare to the Ideal Final Result.
+- **First-principles** when accumulated assumptions of the algorithm itself
+  need questioning (e.g. AC-4 propagation, greedy selection, no-backtracking).
+- **Biomimicry** when a natural analog fits (crystal nucleation, quantum
+  measurement, morphogenesis).
+Add the resulting mechanisms as new TODO rows in `src-optimized/README.md`
+(tagged with principle + axis + tier + mechanism + honest tradeoff), then pick
+the highest-priority one and continue iterating. The real stop is when an
+ideation pass itself yields no high-payoff candidate — not when filing stalls.
+You just do one iteration; the orchestrator decides stop/continue.

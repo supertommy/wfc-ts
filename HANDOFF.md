@@ -39,30 +39,38 @@ reproducible case study (like macton/differentiable-collisions-optc).
 Optimized vs reference: knots-standard-48 **6.3×** (1.68ms), circuit-turnless-34
 **1.66×** (4.39ms), rooms-30 **1.71×** (1.80ms). All VALID+DET.
 
-## NEXT: H5+ — push propagation headroom (self-improvement)
+## NEXT: Round 3 — "best WFC in the world" (multi-axis, TRIZ-derived)
 
-The scan is gone (H4); **propagation is now the dominant cost on every input**.
-There is no external bar to chase (we already beat three-wfc/blazin/kchapelier),
-so this round is pure self-improvement: push propagation until re-profiling shows
-no high-payoff candidate remains.
+Round 2 (H5+) hit the AC-4 propagation wall and stopped correctly. Round 3
+re-frames via an **ideation stall-mode**: when filing stalls or a wall is
+confirmed, the loop runs a creative-ideation pass (TRIZ / first-principles /
+biomimicry) to mint frame-breaking candidates, then continues — so it no longer
+halts at algorithmic walls.
 
-**Resume by re-engaging the ratchet loop** (`loop_control`, after-turn, max 100),
-one `worker` subagent per iteration following `prompts/optimize-one.md`. The
-loop orchestration prompt is in `src-optimized/README.md` (Exit criteria section)
-and was last used as `loop_control start` — re-run it. Each iteration: ground via
-`bun run harness/prove-harness.ts`, check exit, pick next TODO candidate from
-`src-optimized/README.md`, spawn worker, report.
+**Priority: SPEED > success-rate > memory.** Memory least important; accept more
+memory for speed. **Plain JS/TS only — NO WASM.** WebGPU allowed as optional
+path (portable JS fallback mandatory in Node+browser). Solver core stays
+Node+browser-portable.
 
-**Profiling note**: `scripts/profile.ts` instruments the *reference* and is STALE
-post-H4 (the scan it shows is gone). To find the optimized's current bottleneck,
-instrument `src-optimized/model.ts` with per-phase timers (nextUnobservedNode/heap
-extract, observe, propagate, ban+heap-update) or use `bun --cpu-profile` on
-`harness/run.ts optimized <input>`.
+Backlog (H10–H21, ranked by priority in `src-optimized/README.md` Round 3
+section): H10 preliminary-action pruning (all 3 axes, IFR-aligned, first), H15
+watched-literal propagation (the circuit/rooms speed wall), H12 restart-with-
+derived-seeds + H13 CDCL conflict learning (success-rate frontier), H14/H17
+look-ahead + threat-annealed selection, H16 steppable run loop (web), H21 WebGPU
+(stretch), then memory candidates (H11/H18/H19/H20) last.
 
-Candidate seed for this round (in `src-optimized/README.md`): H5 dedup/skip
-propagation work on already-collapsed cells + per-decrement overhead; H6 heap
-decrease-key cost (many bans on large-T); H7 observe weighted-pick O(T) for
-large T (circuit T=36). Re-profile to rank by Amdahl before picking.
+**New gate tools** (trusted, in harness/): `harness/success-rate.ts` (completion
+rate over N seeds — success axis; baseline: opt 92% vs ref 46% on dense N=50),
+`harness/memory.ts` (footprint bytes — memory axis), plus existing
+`measure-speedup.ts` (speed) + `prove-harness.ts` (VALID+DET). Keep criteria are
+per-axis (see optimize-one.md + README Round 3).
+
+Target: circuit/rooms ≥3x vs ref (via H10/H15), knots-dense completion 92%→≥99%
+(via H12/H13), knots-48 held ≥6x. Real stop = an ideation pass yields no new
+high-payoff candidate. Minimum ~25 iterations or until exhausted.
+
+Resume via `loop_control` (after-turn, max ~60), one `worker` subagent per
+iteration following `prompts/optimize-one.md` (now with STALL→IDEATE branch).
 
 ## Key files (read order for a fresh session)
 
@@ -107,5 +115,7 @@ in the log with measurements.
 - `bun run typecheck` — tsc --noEmit, strict (must stay clean).
 - `bun test` — reference correctness suite.
 - `bun run harness/prove-harness.ts` — the gate (VALID+DET) + speedup, all inputs.
-- `bun run harness/measure-speedup.ts <input> [N]` — median-of-N ref vs opt.
+- `bun run harness/measure-speedup.ts <input> [N]` — median-of-N ref vs opt (speed axis).
+- `bun run harness/success-rate.ts <input> [N=100]` — completion rate over N seeds, ref vs opt (success axis).
+- `bun run harness/memory.ts [input]` — optimized typed-array footprint bytes (memory axis).
 - `bun run benchmarks/external/run.ts` — external head-to-head (~45s; child-process timeout guarded).

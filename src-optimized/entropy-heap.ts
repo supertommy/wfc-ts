@@ -188,6 +188,11 @@ export class EntropyHeap {
     this.keyToPos.fill(-1);
   }
 
+  /** Bytes of the heap's typed arrays (keys + entropy + keyToPos). */
+  footprintBytes(): number {
+    return this.keys.byteLength + this.entropy.byteLength + this.keyToPos.byteLength;
+  }
+
   /** True if entry at index a should come before entry at b (min-heap). */
   private lessThan(a: number, b: number): boolean {
     const pa = this.entropy[a];

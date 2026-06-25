@@ -428,6 +428,36 @@ export abstract class Model {
     return this.observed;
   }
 
+  /**
+   * Total bytes of the typed-array working set the solver allocates (wave,
+   * compatible, propagator CSR, stacks, sums, heap, batch buffers). Read-only,
+   * self-maintaining (sums actual .byteLength) so it stays correct as the data
+   * layout changes (e.g. bitpacking). The memory-axis gate (harness/memory.ts)
+   * uses this to judge memory-efficiency candidates. Excludes the tileset/weights
+   * definition (shared, untimed) and the observed[] output buffer (count*4, fixed).
+   */
+  footprintBytes(): number {
+    let bytes = 0;
+    bytes += this.wave.byteLength;
+    bytes += this.compatible.byteLength;
+    bytes += this.propData.byteLength;
+    bytes += this.propStart.byteLength;
+    bytes += this.propLen.byteLength;
+    bytes += this.stackI.byteLength;
+    bytes += this.stackT.byteLength;
+    bytes += this.dirtyHeapCells.byteLength;
+    bytes += this.heapUpdateGen.byteLength;
+    bytes += this.distribution.byteLength;
+    bytes += this.weightLogWeights.byteLength;
+    bytes += this.sumsOfOnes.byteLength;
+    bytes += this.sumsOfWeights.byteLength;
+    bytes += this.sumsOfWeightLogWeights.byteLength;
+    bytes += this.entropies.byteLength;
+    bytes += this.observed.byteLength;
+    if (this.entropyHeap) bytes += this.entropyHeap.footprintBytes();
+    return bytes;
+  }
+
   isComplete(): boolean {
     const { sumsOfOnes, count } = this;
     for (let i = 0; i < count; i++) {
