@@ -1,23 +1,51 @@
 {
   "name": "wfc-ts",
-  "version": "0.1.0",
-  "description": "Wave Function Collapse (simple tiled model) in TypeScript — a reference implementation optimized via the Mike Acton ratchet technique.",
+  "version": "1.0.0",
+  "description": "Fast Wave Function Collapse (simple tiled model) in TypeScript — 2.5-20x faster than comparable implementations",
   "type": "module",
   "license": "MIT",
   "author": "tommyato",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tommyato/wfc-ts.git"
+    "url": "https://github.com/supertommy-oss/wfc-ts.git"
   },
+  "homepage": "https://github.com/supertommy-oss/wfc-ts#readme",
+  "bugs": {
+    "url": "https://github.com/supertommy-oss/wfc-ts/issues"
+  },
+  "keywords": [
+    "wfc",
+    "wave-function-collapse",
+    "procedural-generation",
+    "constraint-satisfaction",
+    "tilemap",
+    "pcg",
+    "game-development",
+    "typescript"
+  ],
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./src-optimized/index.ts",
+      "default": "./src-optimized/index.ts"
+    }
   },
+  "main": "./src-optimized/index.ts",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "src-optimized/",
+    "dist/",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
     "bench": "bun run performance-test/measure.ts",
     "prove": "bun run harness/prove-harness.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

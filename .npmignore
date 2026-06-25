@@ -1,0 +1,36 @@
+# Development
+src/
+test/
+harness/
+scripts/
+benchmarks/
+performance-test/
+prompts/
+docs/
+viz/
+
+# Config
+tsconfig.json
+tsconfig.build.json
+vitest.config.ts
+.gitignore
+
+# Project files
+OPTIMIZATION-LOG.md
+HARNESS-BASELINE.md
+HANDOFF.md
+PHASE-4C-CHECKLIST.md
+MEMORY.md
+
+# Git
+.git/
+.github/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

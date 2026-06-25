@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./dist",
+    "rootDir": "./src-optimized",
+    "allowImportingTsExtensions": false
+  },
+  "include": ["src-optimized/**/*"],
+  "exclude": ["node_modules", "test", "harness", "scripts", "benchmarks", "viz", "docs", "prompts"]
+}

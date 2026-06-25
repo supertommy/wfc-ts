@@ -5,10 +5,10 @@ Status: **IN PROGRESS**
 ## Items
 
 - [x] **Generalization check** — verify alt seeds, larger grids (64x64, 128x128) pass VALID+DET ✓ 27/27 pass
-- [ ] **Web visualizer** — `viz/` directory, uses H16 stepRun generator, simple HTML+JS demo
-- [ ] **Learning guide** — `docs/` with WFC concepts, architecture walkthrough, optimization history
-- [ ] **Prompts docs** — complete/polish the 4 docs in `prompts/`
-- [ ] **README polish** — final README.md with badges, install, usage, benchmarks, API
+- [x] **Web visualizer** — `viz/` directory, uses H16 stepRun generator, simple HTML+JS demo ✓
+- [x] **Learning guide** — `docs/` with WFC concepts, architecture walkthrough, optimization history ✓
+- [x] **Prompts docs** — `prompts/optimize-one.md` is comprehensive (full ratchet methodology) ✓
+- [x] **README polish** — final README.md with badges, install, usage, benchmarks, API ✓
 - [x] **External benchmark refresh** — rerun with final solver, update RESULTS.md ✓ 2.55–19.57x faster than all competitors
 - [ ] **OSS packaging** — package.json metadata, LICENSE check, .npmignore, publish prep
 
