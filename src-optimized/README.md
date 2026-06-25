@@ -142,7 +142,14 @@ would require a different propagation algorithm (out of scope for the ratchet,
 which optimizes the existing algorithm; a new algorithm is a separate project).
 Loop paused on exhaustion after H28 (narrowing complete); iter-15 re-profile + ideation-3 minted 4 fresh (H29–H31/H33). H31 KEPT iter-16; H30 KEPT iter-17; H29 KEPT iter-18 (mem win, completes MRV cleanup); H33 REVERTED iter-19. Iteration 20 (ideation-4) rigorously assessed remaining angles (propagator dedup from symmetry data, compatible transpose from stride spans, observed narrow, + TRIZ/FP/Biomimicry angles on AC-4 wall) — minted only REJECTEDs (H34/H35/H36). Real stop only when ideation yields nothing worth trying (genuine exhaustion confirmed).
 
-## Round 3 — "best WFC in the world" (multi-axis, TRIZ-derived)
+## Round 3 — "best WFC in the world" (multi-axis, TRIZ-derived) — CONCLUDED at genuine exhaustion
+
+**Round 3 DONE (~20 iterations, 11 KEPT).** Final: knots-48 11.5x, circuit 2.77x, rooms 3.22x (MET 3x);
+success 100%; memory -47% (circuit 1244KB→659KB); steppable/cancelable run loop (H16). Ideation pass 4
+rigorously confirmed no >5-10% candidate remains (H34/H35/H36 data-grounded marginal). The AC-4
+propagation inner decrement loop is the irreducible wall in plain JS (alg rewrites H5/H15 reverted;
+cache/neighbor/selection all optimized). See OPTIMIZATION-LOG.md Round 3 conclusion. Next: Phase 4c
+open-source finish (visualizer, learning guide, README).
 
 **Priority: SPEED > success-rate > memory.** Memory is least important; we
 ACCEPT more memory for faster performance. A memory-only win that costs speed

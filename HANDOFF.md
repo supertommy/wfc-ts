@@ -39,38 +39,25 @@ reproducible case study (like macton/differentiable-collisions-optc).
 Optimized vs reference: knots-standard-48 **6.3×** (1.68ms), circuit-turnless-34
 **1.66×** (4.39ms), rooms-30 **1.71×** (1.80ms). All VALID+DET.
 
-## NEXT: Round 3 — "best WFC in the world" (multi-axis, TRIZ-derived)
+## NEXT: Phase 4c — open-source finish (Round 3 ratchet CONCLUDED at genuine exhaustion)
 
-Round 2 (H5+) hit the AC-4 propagation wall and stopped correctly. Round 3
-re-frames via an **ideation stall-mode**: when filing stalls or a wall is
-confirmed, the loop runs a creative-ideation pass (TRIZ / first-principles /
-biomimicry) to mint frame-breaking candidates, then continues — so it no longer
-halts at algorithmic walls.
+Round 3 (~20 iterations, 11 KEPT: H10/H12/H16/H22/H23/H26/H27/H28/H29/H30/H31) is DONE. Final
+optimized vs reference (VALID+DET): knots-48 11.5x, circuit 2.77x, rooms 3.22x (MET 3x); success 100%
+on committed + harder/larger inputs; memory circuit 1244KB→659KB (-47%); steppable/cancelable run
+loop (H16, a web differentiator). The AC-4 propagation inner decrement loop is the irreducible
+plain-JS wall (alg reverts H5/H15; ideation-4 confirmed no >5-10% candidate remains). See
+OPTIMIZATION-LOG.md Round 3 conclusion + src-optimized/README.md.
 
-**Priority: SPEED > success-rate > memory.** Memory least important; accept more
-memory for speed. **Plain JS/TS only — NO WASM.** WebGPU allowed as optional
-path (portable JS fallback mandatory in Node+browser). Solver core stays
-Node+browser-portable.
+The optimization is complete across all three axes (speed/success/memory) + web fit. What remains
+is the open-source case-study finish:
+1. **Generalization check** (alternate seeds / larger grids — mandatory before any final claim).
+2. **Web visualizer** (`viz/`) — uses the H16 steppable run loop to animate the collapse.
+3. **Learning guide** (`docs/`) + the four `prompts/` instruction docs — the case-study artifact.
+4. Final README + open-source packaging (API docs, types, examples, benchmarks/external/RESULTS.md
+   refresh with the post-Round-3 numbers).
 
-Backlog (H10–H21, ranked by priority in `src-optimized/README.md` Round 3
-section): H10 preliminary-action pruning (all 3 axes, IFR-aligned, first), H15
-watched-literal propagation (the circuit/rooms speed wall), H12 restart-with-
-derived-seeds + H13 CDCL conflict learning (success-rate frontier), H14/H17
-look-ahead + threat-annealed selection, H16 steppable run loop (web), H21 WebGPU
-(stretch), then memory candidates (H11/H18/H19/H20) last.
-
-**New gate tools** (trusted, in harness/): `harness/success-rate.ts` (completion
-rate over N seeds — success axis; baseline: opt 92% vs ref 46% on dense N=50),
-`harness/memory.ts` (footprint bytes — memory axis), plus existing
-`measure-speedup.ts` (speed) + `prove-harness.ts` (VALID+DET). Keep criteria are
-per-axis (see optimize-one.md + README Round 3).
-
-Target: circuit/rooms ≥3x vs ref (via H10/H15), knots-dense completion 92%→≥99%
-(via H12/H13), knots-48 held ≥6x. Real stop = an ideation pass yields no new
-high-payoff candidate. Minimum ~25 iterations or until exhausted.
-
-Resume via `loop_control` (after-turn, max ~60), one `worker` subagent per
-iteration following `prompts/optimize-one.md` (now with STALL→IDEATE branch).
+The ratchet loop is STOPPED. To resume optimization later, re-engage loop_control with the
+Round 3 prompt (a fresh ideation pass would be needed — current candidates are exhausted).
 
 ## Key files (read order for a fresh session)
 

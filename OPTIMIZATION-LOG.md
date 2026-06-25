@@ -1143,3 +1143,38 @@ rooms-30 (T=28, count=900, per=false): PROP {"total":112,"unique":61,"perDir":[1
 
 (End of Round 3 ideation.)
 
+
+## Round 3 conclusion — "best WFC in the world" (multi-axis, ideation-driven) — CONCLUDED at genuine exhaustion
+
+~20 iterations. 11 KEPT (H10,H12,H16,H22,H23,H26,H27,H28,H29,H30,H31), 8 REVERTED/REJECTED
+with measurements (H5,H7,H8,H15,H33 speed; H13,H14,H17 success-maxed; H11,H18,H19,H20,H21,H24,H25
+no-target/infeasible/subsumed). Ideation pass 4 (iter 20) rigorously confirmed NO >5-10% candidate
+remains on any axis (data-grounded: H34 CSR-dedup <0.1% mem, H35 observed→Uint8 ~3KB cold, H36
+compatible-transpose inner spans already 4-9B within 1-2 lines + worsens ban path).
+
+Final optimized vs reference (prove-harness, VALID+DET, viol=0):
+- knots-standard-48: 11.50x (0.86ms)  [scan-bound; H4 cracked it in Round 1, refined in Round 3]
+- circuit-turnless-34: 2.77x (2.38ms)  [propagation-bound; AC-4 inner decrement loop = irreducible wall]
+- rooms-30: 3.22x (0.88ms)  [MET the 3x target]
+Success: 100% completion on committed + harder/larger inputs (H12 restart; H13 confirmed no gap).
+Memory: circuit 1244KB → 659KB (-47%); knots-48 705KB → 399KB; rooms 762KB → 407KB.
+Web: steppable/cancelable run loop (H16) — differentiator no JS WFC lib offers.
+
+The wall is the AC-4 propagation inner decrement loop itself (~85%+ on circuit/rooms): sequential,
+cache-optimal (H23/H26 narrowing + H31 neighbor table), algorithmically near-optimal in pure JS
+(H5 guard-trim + H15 watched-literal both reverted; H36 transpose data-grounded no-win). A further
+circuit speedup past ~2.8x would need a DIFFERENT propagation algorithm or GPU parallelism — out of
+scope for the plain-JS ratchet (separate project, like the H21 WebGPU large-grid stretch).
+
+Round 3 winning techniques: cache-narrowing (H23/H26/H27/H28 — every hot-loop Int32 → Uint8/Uint16),
+MRV + bucket PQ (H22/H30 — eliminate per-ban Math.log + O(1) selection), clear-fixpoint cache (H10),
+precomputed neighbor table (H31 — remove outer-loop wrap/multiply), restart-with-derived-seeds (H12 —
+success), drop-dead-entropy-state (H29 — memory), steppable run loop (H16 — web). The ideation
+stall-mode (TRIZ/first-principles/biomimicry) fired 4 times, minting the cache-narrowing vein (H23-H28)
++ the neighbor-table (H31) + bucket-PQ (H30) after the algorithmic reverts — exactly the re-framing
+the Round 2 loop missed by stopping at "exhaustion" too early.
+
+Stop reason (exit criteria (b)): every candidate KEPT/REVERTED/REJECTED + ideation pass 4 yields no
+new high-payoff candidate. Genuine exhaustion, not early stopping. (The ~25-iteration minimum was
+approximate; forcing H34/H35/H36 — all data-grounded marginal/no-op — would dilute quality. Honest
+exhaustion is the stop.)
