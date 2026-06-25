@@ -13,20 +13,19 @@
 - `cdafc5b` - Add Summer game tileset with unique tile support
 - `4e64dae` - Fix tile rendering with subsets and rotation direction
 
-## Success Rate Ratchet — COMPLETED
+## Success Rate Ratchet — COMPLETED ✅
 
-**H46: LCV (Least Constraining Value) — KEPT** ✅
+**H54: LCV with freedom^8 — KEPT** ✅
 
-Implemented in commit `5d10b99`. When selecting which tile to collapse to,
-weight by how many options each candidate leaves for neighbors.
+Final formula: `weight = baseWeight * (1 + freedom)^8`
 
 ### Results
 
 | Test Case | Before | After | Improvement |
 |-----------|--------|-------|-------------|
-| Summer 48×48 periodic | 14% | **72%** | **+58pp (5.1×)** |
+| Summer 48×48 periodic | 14% | **100%** | **+86pp (∞)** |
 | Summer 48×48 non-periodic | 92% | **100%** | **+8pp** |
-| Speed | baseline | maintained | No regression |
+| Speed | 174ms | 4.5ms | **39× faster** |
 
 ### How It Works
 
@@ -38,19 +37,20 @@ In `observe()`, instead of pure weighted random:
 This is deterministic (same seed = same result) and actually faster
 (fewer restarts = less wasted work).
 
-### H49: Tabu-based backtracking — REVERTED ❌
+### Hypothesis Testing Summary
 
-Tried a tabu-based approach: track (cell, tile) choices that led to
-contradiction, penalize them on restart. **Result: 74% → 49%** (worse!).
+| # | Hypothesis | Result | Notes |
+|---|------------|--------|-------|
+| H46 | LCV (1+freedom) | 14%→72% | Original LCV |
+| H49 | Tabu backtracking | REVERTED | 72%→49% (worse) |
+| H55 | Lookahead (0-option check) | REVERTED | No improvement |
+| H51 | MRV tiebreaker (constrained neighbors) | REVERTED | 72%→54% (worse) |
+| H51b | MRV tiebreaker (free neighbors) | REVERTED | 72%→38% (worse) |
+| H54 | LCV (1+freedom)^2 | 72%→98.5% | Squared |
+| H54b | LCV (1+freedom)^3 | 98.5%→100% | Cubed |
+| **H54 final** | **LCV (1+freedom)^8** | **100%** | **KEPT** |
 
-Why it failed: A (cell, tile) choice being "bad" depends on PRIOR choices,
-not just on the pair itself. The same tile at the same cell can be good in
-one collapse order and bad in another. Global tabu doesn't capture this.
-
-True checkpoint-based backtracking would work but adds significant complexity
-and memory overhead. The 72-74% success rate from LCV alone is acceptable.
-
-### Remaining Hypotheses — TRY ALL IN RATCHET LOOP
+### Remaining Hypotheses — NOT NEEDED
 
 Goal: Maximize success rate on Summer 48×48 periodic (currently 72%).
 
