@@ -237,3 +237,19 @@ Batching successfully moved decrease-key cost off the per-ban hot path.
 
 **Cost:** ~1 LLM turn + ~4min wall (subprofile 3 runs + revert, before 3x measure5, implement+edit,
 typecheck+prove, after 3x measure5, gate, log+readme, commit).
+
+## Hypothesis 7 — observe weighted-pick O(T) via cumsum + binary search [REVERTED]
+
+**Hypothesis:** Post-H6, observe is ~4% (per Round2 profile); for circuit T=36 the absolute O(T) scan in weighted pick (and dist build) is the next lever after ban/heap. Replace the two O(T) linear passes (build dist + sum+partial in weightedPick) with O(T) prefix-cumsum build into dist[] followed by O(log T) bisect to find the slot whose cum first meets threshold. Approach chosen to preserve *exact* selection for a given PRNG draw (incl. zero-weight slot fallback behavior for r=0 and fp edge cases) by replicating the identical cumulative arithmetic and >= tests — aiming for Tier-1 (byte-id vs pre-H7 opt state).
+
+**Change:** Single edit in `src-optimized/model.ts`: in observe(), compute running sum + write prefix to dist[], draw threshold, bisect for the matching t (lower bound), use as r for the ban pass. weightedPick() left untouched (and unused from observe now). No other files.
+
+**Before (median-of-5, harness/measure-speedup.ts on clean post-H6):** knots-standard-48: 1.979ms ; circuit-turnless-34: 4.727ms ; rooms-30: 2.162ms
+
+**After (same, with H7 cumsum+bisect patch; multiple sets):** knots: 1.992/2.048/1.987/2.011 ms ; circuit: 4.707/4.762/4.705/4.901 ms ; rooms: 2.251/2.154/2.209/2.158 ms
+
+**Gate:** `npx tsc --noEmit` clean; `bun run harness/prove-harness.ts` : VALID+DET on all (viol=0); compare* FAIL (as before, from H4). Same checksums on same seeds confirmed pre/post H7 patch (exact selection preserved for the tested sequences; byte-id vs pre-H7).
+
+**Decision:** REVERT (git checkout -- src-optimized/). VALID+DET hold and selection identical (Tier-1 intent achieved, no change to which pattern chosen per PRNG draw), but no real end-to-end gain above noise: circuit ~4.727ms → ~4.72ms (diff <0.03ms, within run-to-run variance of ~0.05-0.09ms); knots flat or +0.01ms (within noise); rooms variance dominated. The O(T) cumsum build + bisect did not beat the original branchy linear scan's constant factor at T=9 or T=36. (Honest: for these tiny T, two passes over 36 floats is cheaper than build+search overhead.)
+
+**Cost:** ~1 LLM turn + ~9min wall (ground prove, 1x before measure5 + 4x after measure5 across 3 inputs for noise, 4x run.ts for checksum identity, 3x typecheck+prove, edit+reverts, log+readme, commit).
