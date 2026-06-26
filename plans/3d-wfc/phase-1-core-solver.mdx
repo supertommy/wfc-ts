@@ -143,10 +143,12 @@ unit-tests + existing harness gate
 
 **Demo:** `bun test test/engine.test.ts` — topology import works (engine still missing)
 
-### Sprint 2: Extract WFCEngine
+### Sprint 2: Extract WFCEngine — **SHIPPED**
+> **Built:** src/engine.ts with dimension-agnostic WFCEngine (wave, compatible, propagator, observe/propagate/ban/run/stepRun). Refactored src/solver.ts to delegate to engine. Harness passes (VALID + DET). Engine tests pass (5/5).
+
 **Goal:** Move core algorithm to engine, have WFCSolver delegate to it.
 
-- [ ] Task 2.1: Create `src/engine.ts` with `WFCEngine` class `(3pt)`
+- [x] Task 2.1: Create `src/engine.ts` with `WFCEngine` class `(3pt)`
   - Move from `src/solver.ts`: wave state, compatible counts, propagator CSR, neighbors table, observe/propagate/ban/clear/run/stepRun
   - Constructor takes: `topology: Topology`, `weights: Float64Array`, `propStart/propLen/propData` (pre-built CSR), `heuristic`
   - **Keep all existing optimizations**: H10 snapshots, H12 restart seeds, H16 stepRun, H22 MRV bucket PQ, H23-H31 narrowing/caching
@@ -171,7 +173,7 @@ unit-tests + existing harness gate
   for (let d = 0; d < this.D; d++) { ... }
   ```
 
-- [ ] Task 2.2: Refactor `src/solver.ts` to use `WFCEngine` `(2pt)`
+- [x] Task 2.2: Refactor `src/solver.ts` to use `WFCEngine` `(2pt)`
   - Keep `WFCSolver` class signature identical (backward compat)
   - Constructor: validate rules, build CSR propagator, create `GridTopology2D`, instantiate `WFCEngine`
   - Delegate `run()`, `stepRun()`, `result()`, getters to engine
