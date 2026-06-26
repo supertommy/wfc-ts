@@ -292,10 +292,12 @@ bun test test/solver-3d.test.ts
 # All 3D tests should pass
 ```
 
-### Sprint 4: Verify and Gate
+### Sprint 4: Verify and Gate — **SHIPPED**
+> **Built:** Full verification passes (typecheck, 19/19 tests, harness PASS). Tree-shaking verified (2D bundle ~15.5KB without 3D code, 3D bundle ~15.75KB without 2D code).
+
 **Goal:** Run all gates to confirm nothing broke.
 
-- [ ] Task 4.1: Run full verification suite `(0pt)`
+- [x] Task 4.1: Run full verification suite `(0pt)`
   ```bash
   bun run typecheck
   bun test
@@ -303,7 +305,7 @@ bun test test/solver-3d.test.ts
   ```
   All must pass.
 
-- [ ] Task 4.2: Verify tree-shaking works `(1pt)`
+- [x] Task 4.2: Verify tree-shaking works `(1pt)`
   ```bash
   # Bundle only 2D
   bun build src/solver.ts --minify --outfile=/tmp/2d-only.js
@@ -316,7 +318,7 @@ bun test test/solver-3d.test.ts
   grep -c "GridTopology2D" /tmp/3d-only.js  # expect 0
   ```
 
-- [ ] Task 4.3: Commit with message "feat: add WFCSolver3D with shared engine" `(0pt)`
+- [x] Task 4.3: Commit with message "feat: add WFCSolver3D with shared engine" `(0pt)`
 
 **Demo:**
 ```bash

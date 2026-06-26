@@ -1,0 +1,173 @@
+# 3D WFC Implementation Plan
+
+## Overview
+
+Add 3D support to wfc-ts with a new `WFCSolver3D` class operating on `width × height × depth` voxel grids. Extract a shared `WFCEngine` core so both 2D and 3D solvers reuse the same algorithm, enabling tree-shaking (users importing only 2D don't bundle 3D code and vice versa). Include a Three.js visualizer for 3D results.
+
+## Implementation Summary
+
+**What we're building**
+- `WFCSolver3D` class with 6 directions (left, right, up, down, front, back)
+- `TileRule3D` interface: `\{ forTile, left, right, up, down, front, back \}`
+- Shared `WFCEngine` that both `WFCSolver` and `WFCSolver3D` delegate to
+- Three.js voxel visualizer (`viz3d/`) with orbit camera and step animation
+
+**How we're building it**
+- Extract dimension-agnostic core into `src/engine.ts` — owns wave state, propagator CSR, compatible counts, observe/propagate/ban/run loop
+- Create `src/topology.ts` with `Topology` interface + `GridTopology2D` / `GridTopology3D` — handles neighbor computation, wrapping, direction count
+- Thin facade solvers (`WFCSolver`, `WFCSolver3D`) validate rules, build propagator, instantiate engine with appropriate topology
+- Visualizer uses `InstancedMesh` with exposed-face culling for performance (not naive cubes)
+
+**Architecture & integration**
+- Core extraction: `src/solver.ts` refactored to use engine; new `src/solver-3d.ts` also uses engine
+- Topology abstraction enables future graph-based WFC (irregular grids like Townscaper)
+- Package exports both solvers from `src/index.ts`; tree-shaking drops unused topology classes
+- Visualization in `viz3d/` (separate from 2D `viz/`)
+
+**New artifacts**
+- `src/engine.ts` — shared WFC state machine (wave, compatible, propagator, observe/propagate/ban/run)
+- `src/topology.ts` — `Topology` interface + `GridTopology2D` + `GridTopology3D`
+- `src/solver-3d.ts` — `WFCSolver3D` class (6-direction facade)
+- `src/types.ts` — shared types (`TileRule`, `TileRule3D`, `StepStatus`)
+- `viz3d/` — Three.js visualizer (server + HTML + InstancedMesh renderer)
+- `test/solver-3d.test.ts` — 3D-specific unit tests
+- `test/engine.test.ts` — shared engine tests
+- `harness/validate-3d.ts` — 3D adjacency validation
+- `performance-test/tilesets-3d/` — 3D tileset(s) for testing
+- `docs/3d-wfc.md` — 3D concepts and tileset authoring guide
+
+**Reused without modification**
+- `src/bucket-pq.ts` — MRV selection (dimension-agnostic)
+- `src/entropy-heap.ts` — entropy selection (dimension-agnostic)
+- `src/prng.ts` — deterministic PRNG
+
+**Modified existing code**
+- `src/solver.ts` — refactor to delegate to `WFCEngine` instead of owning state directly
+- `src/index.ts` — add `WFCSolver3D`, `TileRule3D` exports
+- `harness/types.ts` — add `InputSpec3D` with depth
+- `README.md` — add 3D section with example
+
+**Verification approach**
+- Phase 1: Existing 2D harness (`bun run harness/prove-harness.ts`) must stay green after engine extraction
+- Phase 1: New 3D unit tests verify 3D solve, periodicity, thin slabs
+- Phase 2: Manual browser verification of Three.js visualizer
+- Phase 3: 3D validation harness (`harness/prove-harness-3d.ts`)
+
+**Edge cases handled**
+- Thin grids (1×N×M, N×1×M, etc.) — topology handles self-neighbors
+- Periodic vs non-periodic boundaries — 6-face wrapping or -1 neighbors
+- Zero-support tiles at boundaries — proactive pruning (new, fixes latent 2D issue too)
+- Large grids (32³ = 32K cells) — same typed-array optimizations apply
+
+**Notable trade-offs or risks**
+- Extracting engine is more upfront work but enables clean 3D + future graph-WFC
+- 3D contradiction rates may be higher (more constraints); restart budget may need tuning
+- 3D grids are ~32× larger than equivalent 2D — memory and perf scale accordingly
+- LCV formula `(1+freedom)^3` may need retuning for 3D (6 neighbors vs 4)
+
+## Research Context
+
+### Patterns We're Following
+- Current solver pattern: `src/solver.ts` uses CSR propagator, precomputed neighbor table (`neighbors[count*4]`), AC-4 support counts
+- Direction encoding: `DX/DY` arrays + `DIR_*` constants at `src/solver.ts:71-78`
+- Grid indexing: `i = x + y*MX` (becomes `i = x + y*MX + z*MX*MY` for 3D)
+- Opposite directions: 0↔2, 1↔3 (will add 4↔5 for front/back)
+
+### Architecture Decisions
+- **Separate solver classes** (not parameterized): keeps 2D API clean, hot paths branch-free
+- **Shared engine via composition**: `WFCEngine` is instantiated by each solver with its topology
+- **Topology interface for graph extensibility**: `neighbor(cell, dir)` abstracts grid layout
+
+### Decisions from User Clarification
+- **Direction naming**: compass style (`left/right/up/down/front/back`), not axis style (`negX/posX/...`)
+- **Code sharing**: extract shared engine now (not copy-paste-then-refactor)
+- **Tree-shaking**: structure for minimal bundles — 2D-only users don't pay for 3D code
+
+## Skills to Reference
+- `threejs-gotchas` — InstancedMesh shadows, sRGB/linear colors, object pools, depthTest for voxel rendering
+- `game-dev-gotchas` — zero-allocation loops, fixed-tick interpolation for step animation
+- `software-design-patterns` — ECS patterns, game loop structure
+- `testing-gotchas` — jsdom/happy-dom WebGL stub for any Three.js unit tests
+
+## Knowledge to Reference
+- `investigations/gpu-frontier-data-structures-for-wfc.md` — WFC propagation model (CPU AC-4 vs GPU frontier); relevant for understanding the algorithm structure being extracted into engine
+- `skills/threejs-optimization/skill.md` — draw call reduction, instancing, dispose discipline, `renderer.info` monitoring
+- `research/pixzels-pixel-art-perspective-tool-2026-06-20.md` — Three.js voxel rendering with custom BufferGeometry + exposed-face culling (directly applicable to viz3d)
+- `playbook/infinite-procedural-generation.md` — streaming/cleanup patterns if 3D grids become very large
+
+## Sprint Preference
+continue-until-blocked
+
+## Verification Strategy
+hybrid (unit tests for solver logic + browser verification for visualizer + build/typecheck gates)
+
+## Phases
+
+Each phase totals ≤ 8 story points and leaves the app runnable.
+
+| # | Phase | Points | File | Status | Description |
+|---|-------|--------|------|--------|-------------|
+| 1 | Core Solver | 8 | [phase-1-core-solver.mdx](./phase-1-core-solver.mdx) | ✅ **SHIPPED** | Extract engine, add topology abstraction, implement `WFCSolver3D` |
+| 2 | Visualizer | 5 | [phase-2-visualizer.mdx](./phase-2-visualizer.mdx) | Pending | Three.js `viz3d/` with InstancedMesh, orbit camera, step animation |
+| 3 | Harness + Docs | 5 | [phase-3-harness-docs.mdx](./phase-3-harness-docs.mdx) | Pending | 3D validation, perf baselines, README, learning guide |
+
+## Files to Create/Modify
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `src/engine.ts` | Create | Shared WFCEngine (wave, compatible, propagator, observe/propagate/ban/run) |
+| `src/topology.ts` | Create | Topology interface + GridTopology2D + GridTopology3D |
+| `src/types.ts` | Create | Shared types (TileRule, TileRule3D, StepStatus) |
+| `src/solver-3d.ts` | Create | WFCSolver3D class |
+| `src/solver.ts` | Modify | Refactor to use WFCEngine |
+| `src/index.ts` | Modify | Add 3D exports |
+| `test/engine.test.ts` | Create | Engine unit tests |
+| `test/solver-3d.test.ts` | Create | 3D solver unit tests |
+| `performance-test/tilesets-3d/Pipes/` | Create | 3D tileset for testing |
+| `viz3d/index.html` | Create | Three.js visualizer page |
+| `viz3d/server.ts` | Create | 3D viz server with SSE |
+| `harness/types.ts` | Modify | Add InputSpec3D |
+| `harness/validate-3d.ts` | Create | 3D adjacency validation |
+| `docs/3d-wfc.md` | Create | 3D concepts and authoring guide |
+| `docs/learning/3d-wfc.mdx` | Create | Interactive learning guide |
+| `README.md` | Modify | Add 3D section |
+
+## Future Work: Townscaper-Style WFC
+
+After completing regular 3D grid WFC, the next milestone is **Townscaper-style WFC** — irregular grids with marching cubes for smooth surfaces. This is the approach Oskar Stålberg used to create the beloved town-building toy.
+
+The `Topology` interface we're extracting in Phase 1 is designed with this in mind:
+
+- `GridTopology2D` / `GridTopology3D` — regular grids (this plan)
+- `GraphTopology` — irregular grids where each cell has variable neighbors (future)
+- `MeshTopology` — WFC on mesh faces/edges for architectural generation (future)
+
+Key differences for Townscaper-style:
+- **Irregular grid**: hex-ish cells, not cubes — `neighbor()` returns variable counts per cell
+- **Marching cubes**: smooth surfaces instead of blocky voxels
+- **Real-time user interaction**: click to add/remove blocks, WFC fills in details
+- **Height-aware heuristics**: ground, walls, roofs have different rules
+
+The shared `WFCEngine` will work unchanged — only the topology differs. This plan establishes that architecture.
+
+---
+
+## Implementation Notes
+
+### Utilities to Reuse
+- `src/bucket-pq.ts` — MRV selection (pass cell count, works for any dimension)
+- `src/entropy-heap.ts` — entropy selection (same)
+- `src/prng.ts` — deterministic PRNG (dimension-agnostic)
+- Typed-array narrowing logic from `src/solver.ts:239-263` — move to engine
+
+### Patterns to Follow
+- Neighbor table precomputation (H31): `neighbors[count*D]` where D=4 or D=6
+- CSR propagator layout: `propStart[D*T]`, `propLen[D*T]`, `propData[...]`
+- LCV heuristic (H54): `(1+freedom)^3` weighting
+- Restart-with-derived-seeds (H12): deterministic restart from base seed
+
+### Pitfalls to Avoid
+- **DO NOT parameterize WFCSolver with `dim`**: separate classes keep hot paths clean
+- **DO NOT inline topology logic in engine**: keep engine dimension-agnostic
+- **DO NOT use naive cubes in viz3d**: exposed-face culling is critical for perf
+- **DO NOT skip 2D harness gate after engine extraction**: must prove refactor is behavior-preserving
