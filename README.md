@@ -25,49 +25,63 @@ bun add wfc-ts
 ## Quick Start
 
 ```typescript
-import { SimpleTiledModel, loadTileset } from "wfc-ts";
+import { WFCSolver } from 'wfc-ts';
 
-// Load a tileset (XML format, mxgmn-compatible)
-const tileset = loadTileset("path/to/tileset.xml");
+// Define tiles: 0=grass, 1=coast, 2=water
+// Rule: grass can't touch water directly (needs coast)
 
-// Create a model
-const model = new SimpleTiledModel({
-  tileset,
-  width: 48,
-  height: 48,
-  periodic: true,
+const solver = new WFCSolver({
+  width: 16,
+  height: 16,
+  periodic: false,
+  
+  weights: [1, 1, 1],  // equal probability
+  
+  rules: [
+    // grass: can touch grass or coast
+    { forTile: 0, left: [0, 1], right: [0, 1], up: [0, 1], down: [0, 1] },
+    // coast: can touch anything (transition tile)
+    { forTile: 1, left: [0, 1, 2], right: [0, 1, 2], up: [0, 1, 2], down: [0, 1, 2] },
+    // water: can touch coast or water (not grass)
+    { forTile: 2, left: [1, 2], right: [1, 2], up: [1, 2], down: [1, 2] },
+  ],
 });
 
-// Run with a seed (deterministic)
-const complete = model.run(12345, 0); // seed=12345, limit=0 (unlimited)
-
-if (complete) {
-  const result = model.result(); // Int32Array of tile indices
-  // Use result to render your map
+if (solver.run(42)) {
+  const grid = solver.result(); // Int32Array of tile indices
+  // Render: 0=🌿, 1=🏖️, 2=🌊
 }
 ```
+
+### What the rules mean
+
+```typescript
+{ forTile: 0, left: [0, 1], right: [0, 1], up: [0, 1], down: [0, 1] }
+//           └─────────── "tile 0 can have tiles 0 or 1 to its left"
+```
+
+The solver doesn't know what tiles look like — it just enforces adjacency rules. You map indices to sprites/rotations when rendering.
 
 ## Steppable API (for visualization)
 
 ```typescript
-import { SimpleTiledModel, loadTileset } from "wfc-ts";
+import { WFCSolver } from 'wfc-ts';
 
-const model = new SimpleTiledModel({ tileset, width: 48, height: 48, periodic: true });
+const solver = new WFCSolver({ width: 16, height: 16, periodic: false, weights, rules });
 
 // Step through the solve, one observation at a time
-for (const status of model.stepRun(12345, 0, 100, 1)) {
+for (const status of solver.stepRun(42, -1, 100, 1)) {
   if (status.done) {
     if (status.ok && status.complete) {
-      console.log("Solved!", model.result());
+      console.log('Solved!', solver.result());
     } else {
-      console.log("Failed after", status.attempt, "attempts");
+      console.log('Failed after', status.attempt, 'attempts');
     }
     break;
   }
   
   // Visualize intermediate state
-  console.log("Observed cell:", status.observedCell);
-  // Access model.wave, model.sumsOfOnes for partial visualization
+  console.log('Observed cell:', status.observedCell, 'Resolved:', status.cellsResolved);
   
   await new Promise(r => requestAnimationFrame(r)); // Animate
 }
@@ -75,57 +89,55 @@ for (const status of model.stepRun(12345, 0, 100, 1)) {
 
 ## API
 
-### `SimpleTiledModel`
+### `WFCSolver`
 
 ```typescript
-interface SimpleTiledModelOptions {
-  tileset: Tileset;
-  subsetName?: string | null;  // Use a named subset of tiles
-  width: number;
-  height: number;
-  periodic: boolean;           // Wrap edges
-  heuristic?: Heuristic;       // MRV (default) or Entropy
+interface TileRule {
+  forTile: number;      // Which tile this rule is for
+  left: number[];       // Tiles that can be to the left
+  right: number[];      // Tiles that can be to the right
+  up: number[];         // Tiles that can be above
+  down: number[];       // Tiles that can be below
 }
 
-class SimpleTiledModel {
-  constructor(options: SimpleTiledModelOptions);
+interface WFCSolverOptions {
+  width: number;
+  height: number;
+  periodic: boolean;              // Wrap edges?
+  weights: number[] | Float64Array; // Weight per tile (higher = more likely)
+  rules: TileRule[];              // Adjacency rules
+  heuristic?: 'mrv' | 'entropy';  // Selection heuristic (default: 'mrv')
+}
+
+class WFCSolver {
+  constructor(options: WFCSolverOptions);
   
-  // Run to completion (fast path)
-  run(seed: number, limit: number, budget?: number): boolean;
+  // Run to completion
+  run(seed: number, limit?: number, budget?: number): boolean;
   
   // Step through (generator, for visualization)
-  stepRun(seed: number, limit: number, budget?: number, yieldEvery?: number, signal?: AbortSignal): Generator<StepStatus>;
+  stepRun(seed, limit?, budget?, yieldEvery?, signal?): Generator<StepStatus>;
   
   // Get result after successful run
   result(): Int32Array;
   
-  // Memory footprint (bytes)
-  footprintBytes(): number;
+  // Dimensions
+  readonly width: number;
+  readonly height: number;
+  readonly tileCount: number;
 }
 ```
 
-### `Tileset`
+### `StepStatus`
 
 ```typescript
-// Load from XML (mxgmn format)
-function loadTileset(xmlPath: string): Tileset;
-function parseTileset(xmlString: string, name: string): Tileset;
-
-interface Tileset {
-  name: string;
-  tilesize: number;
-  tiles: TileDef[];
-  neighbors: NeighborDef[];
-  subsets: SubsetDef[];
-}
-```
-
-### `Heuristic`
-
-```typescript
-enum Heuristic {
-  MRV = "mrv",       // Minimum Remaining Values (default, faster)
-  Entropy = "entropy" // Shannon entropy (original mxgmn behavior)
+interface StepStatus {
+  done: boolean;          // Is the solve finished?
+  ok?: boolean;           // Did it succeed? (only on done:true)
+  complete?: boolean;     // Is the grid fully collapsed?
+  attempt: number;        // Current restart attempt
+  cellsResolved: number;  // Cells collapsed to one tile
+  observedCell?: number;  // Cell just observed (on done:false)
 }
 ```
 
@@ -194,6 +206,23 @@ The LCV heuristic was tuned to balance success rate with visual variety:
 Higher powers make the solver too conservative, always picking the "safest" tile and producing boring output. ^3 is the sweet spot.
 
 See [docs/](docs/) for a detailed optimization walkthrough.
+
+## Legacy: mxgmn XML Tilesets
+
+If you have tilesets in mxgmn's XML format, use the helpers:
+
+```typescript
+import { SimpleTiledModel, loadTileset } from 'wfc-ts/helpers';
+
+const tileset = loadTileset('path/to/tileset.xml');
+const model = new SimpleTiledModel({ tileset, width: 48, height: 48, periodic: true });
+
+if (model.run(12345, -1)) {
+  const result = model.result();
+}
+```
+
+The helpers handle symmetry expansion (L, T, I, F shapes) and XML parsing. The core `WFCSolver` doesn't know about XML — it just takes rules directly.
 
 ## Visualizer
 
