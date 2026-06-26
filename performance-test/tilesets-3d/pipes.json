@@ -1,0 +1,39 @@
+{
+  "name": "Pipes",
+  "description": "Simple 3D pipes tileset for testing WFCSolver3D",
+  "tiles": [
+    { "id": 0, "name": "empty", "description": "Empty space" },
+    { "id": 1, "name": "pipe-straight", "description": "Straight pipe segment" },
+    { "id": 2, "name": "junction", "description": "6-way junction" }
+  ],
+  "weights": [1, 1, 1],
+  "rules": [
+    {
+      "forTile": 0,
+      "left": [0, 1, 2],
+      "right": [0, 1, 2],
+      "up": [0, 1, 2],
+      "down": [0, 1, 2],
+      "front": [0, 1, 2],
+      "back": [0, 1, 2]
+    },
+    {
+      "forTile": 1,
+      "left": [0, 1, 2],
+      "right": [0, 1, 2],
+      "up": [0, 1, 2],
+      "down": [0, 1, 2],
+      "front": [0, 1, 2],
+      "back": [0, 1, 2]
+    },
+    {
+      "forTile": 2,
+      "left": [0, 1, 2],
+      "right": [0, 1, 2],
+      "up": [0, 1, 2],
+      "down": [0, 1, 2],
+      "front": [0, 1, 2],
+      "back": [0, 1, 2]
+    }
+  ]
+}

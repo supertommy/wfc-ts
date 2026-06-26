@@ -1,0 +1,9 @@
+{
+  "name": "pipes-4",
+  "tileset": "pipes",
+  "width": 4,
+  "height": 4,
+  "depth": 4,
+  "periodic": false,
+  "seed": 42
+}

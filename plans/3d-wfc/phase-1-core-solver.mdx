@@ -208,10 +208,12 @@ bun run typecheck && bun run harness/prove-harness.ts
 # Must pass — 2D behavior unchanged
 ```
 
-### Sprint 3: Implement WFCSolver3D
+### Sprint 3: Implement WFCSolver3D — **SHIPPED**
+> **Built:** src/solver-3d.ts with WFCSolver3D (6-direction facade). Updated src/index.ts with 3D exports. Created performance-test/tilesets-3d/pipes.json and inputs-3d/pipes-4.json. All 19 tests pass (10/10 3D tests).
+
 **Goal:** Add 3D solver using the shared engine.
 
-- [ ] Task 3.1: Create `src/solver-3d.ts` with `WFCSolver3D` class `(2pt)`
+- [x] Task 3.1: Create `src/solver-3d.ts` with `WFCSolver3D` class `(2pt)`
   ```typescript
   // src/solver-3d.ts
   import { WFCEngine } from './engine.js';
@@ -269,7 +271,7 @@ bun run typecheck && bun run harness/prove-harness.ts
   }
   ```
 
-- [ ] Task 3.2: Update `src/index.ts` with 3D exports `(1pt)`
+- [x] Task 3.2: Update `src/index.ts` with 3D exports `(1pt)`
   ```typescript
   // src/index.ts
   export { WFCSolver, type WFCSolverOptions } from './solver.js';
@@ -277,7 +279,7 @@ bun run typecheck && bun run harness/prove-harness.ts
   export type { TileRule, TileRule3D, StepStatus, Heuristic } from './types.js';
   ```
 
-- [ ] Task 3.3: Create a simple 3D tileset for testing `(1pt)`
+- [x] Task 3.3: Create a simple 3D tileset for testing `(1pt)`
   - Create `performance-test/tilesets-3d/Pipes/` with a 3-tile "pipes" tileset:
     - Tile 0: empty (connects to empty or pipe ends)
     - Tile 1: straight pipe (connects along axis)
