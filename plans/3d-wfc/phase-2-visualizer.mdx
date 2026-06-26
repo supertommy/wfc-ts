@@ -28,10 +28,12 @@ browser-verification
 
 ## Sprints
 
-### Sprint 0: Verification Harness
+### Sprint 0: Verification Harness — **SHIPPED**
+> **Built:** viz3d/README.md with acceptance criteria, server.ts and index.html stubs.
+
 **Goal:** Define what "working visualizer" means before implementation.
 
-- [ ] Task 0.1: Create `viz3d/README.md` with acceptance criteria `(1pt)`
+- [x] Task 0.1: Create `viz3d/README.md` with acceptance criteria `(1pt)`
   ```markdown
   # 3D WFC Visualizer
 
@@ -53,15 +55,17 @@ browser-verification
   - [ ] Memory: no leaks on repeated solves (dispose properly)
   ```
 
-- [ ] Task 0.2: Create empty `viz3d/server.ts` and `viz3d/index.html` stubs `(0pt)`
+- [x] Task 0.2: Create empty `viz3d/server.ts` and `viz3d/index.html` stubs `(0pt)`
   - Just enough to confirm the directory exists and files load
 
 **Verification:** README defines the target; stubs exist.
 
-### Sprint 1: Server with SSE Streaming
+### Sprint 1: Server with SSE Streaming — **SHIPPED**
+> **Built:** viz3d/server.ts with SSE streaming endpoint, instant endpoint, tileset info, static file serving. Pipes 3D tileset with 5 tiles. Fixed tileset rules for solvability (empty connects to all, pipes allow empty terminators).
+
 **Goal:** Port the 2D viz server pattern to 3D.
 
-- [ ] Task 1.1: Create `viz3d/server.ts` with SSE endpoint `(2pt)`
+- [x] Task 1.1: Create `viz3d/server.ts` with SSE endpoint `(2pt)`
   ```typescript
   // viz3d/server.ts
   import { WFCSolver3D, type TileRule3D } from '../src/index.js';
@@ -92,7 +96,7 @@ browser-verification
   - Use `WFCSolver3D.stepRun()` for streaming
   - Include CORS headers for local dev
 
-- [ ] Task 1.2: Add static file serving for `viz3d/index.html` `(0pt)`
+- [x] Task 1.2: Add static file serving for `viz3d/index.html` `(0pt)`
   - Same pattern as 2D viz
 
 **Demo:**
@@ -102,10 +106,12 @@ curl "http://localhost:3457/api/solve-3d?width=2&height=2&depth=2&seed=1"
 # Should stream SSE events
 ```
 
-### Sprint 2: Three.js Voxel Renderer
+### Sprint 2: Three.js Voxel Renderer — **SHIPPED**
+> **Built:** Full viz3d/index.html with Three.js InstancedMesh rendering, OrbitControls, SSE connection, Step/Run/Reset buttons, Z-slice slider, legend. Browser verified: 6×6×6 solves in 2.7ms with no console errors.
+
 **Goal:** Render voxels using InstancedMesh.
 
-- [ ] Task 2.1: Create `viz3d/index.html` with Three.js setup `(2pt)`
+- [x] Task 2.1: Create `viz3d/index.html` with Three.js setup `(2pt)`
   ```html
   <!DOCTYPE html>
   <html>
@@ -226,7 +232,7 @@ curl "http://localhost:3457/api/solve-3d?width=2&height=2&depth=2&seed=1"
   - DO NOT create individual cube meshes per voxel — use InstancedMesh
   - DO NOT forget to dispose old meshes on reset
 
-- [ ] Task 2.2: Add SSE connection and UI controls `(1pt)`
+- [x] Task 2.2: Add SSE connection and UI controls `(1pt)`
   - "Step" button: fetch with `?step=true`, update after each event
   - "Run" button: fetch without step, animate through events
   - "Reset" button: dispose and rebuild empty grid
@@ -240,10 +246,12 @@ bun run viz3d/server.ts
 # Click Run, observe voxels appearing
 ```
 
-### Sprint 3: Polish
+### Sprint 3: Polish — **SHIPPED**
+> **Built:** Responsive canvas resize, grid size controls (W/H/D/seed/periodic), memory verified stable across 3 solve/reset cycles (~4% GC overhead, no leaks). Zero console errors.
+
 **Goal:** Handle edge cases and improve UX.
 
-- [ ] Task 3.1: Add responsive canvas resize `(0pt)`
+- [x] Task 3.1: Add responsive canvas resize `(0pt)`
   ```javascript
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -252,12 +260,12 @@ bun run viz3d/server.ts
   });
   ```
 
-- [ ] Task 3.2: Add grid size controls `(1pt)`
+- [x] Task 3.2: Add grid size controls `(1pt)`
   - Dropdowns or inputs for width/height/depth
   - Default 4×4×4, options up to 16×16×16
   - Seed input
 
-- [ ] Task 3.3: Verify memory cleanup `(0pt)`
+- [x] Task 3.3: Verify memory cleanup `(0pt)`
   - Check `renderer.info.memory` doesn't grow on repeated solves
   - Console log geometry/texture counts
 

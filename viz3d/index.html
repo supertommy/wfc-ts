@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WFC 3D Visualizer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #1a1a2e; color: #e0e0e0; font-family: system-ui, sans-serif; }
+    #canvas { display: block; width: 100vw; height: 100vh; }
+
+    #controls {
+      position: fixed; top: 12px; left: 12px; z-index: 10;
+      background: rgba(26, 26, 46, 0.85); border: 1px solid #3a3a5e;
+      border-radius: 8px; padding: 14px 16px; backdrop-filter: blur(8px);
+      display: flex; flex-direction: column; gap: 10px; min-width: 220px;
+    }
+    #controls h1 { font-size: 14px; font-weight: 600; margin-bottom: 4px; color: #8be9fd; }
+    #controls .row { display: flex; align-items: center; gap: 8px; }
+    #controls label { font-size: 12px; color: #a0a0c0; white-space: nowrap; }
+    #controls input[type="number"] {
+      width: 50px; background: #2a2a3e; border: 1px solid #444; color: #e0e0e0;
+      border-radius: 4px; padding: 3px 6px; font-size: 12px;
+    }
+    #controls input[type="range"] {
+      flex: 1; accent-color: #8be9fd;
+    }
+    #controls button {
+      background: #3a3a5e; border: 1px solid #555; color: #e0e0e0;
+      border-radius: 5px; padding: 6px 14px; font-size: 12px; cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    #controls button:hover:not(:disabled) { background: #4a4a6e; border-color: #8be9fd; }
+    #controls button:active:not(:disabled) { background: #2a2a4e; }
+    #controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+    #controls .btn-row { display: flex; gap: 6px; }
+    #controls select {
+      background: #2a2a3e; border: 1px solid #444; color: #e0e0e0;
+      border-radius: 4px; padding: 3px 6px; font-size: 12px;
+    }
+    #status {
+      font-size: 12px; color: #a0a0c0; padding: 2px 0;
+    }
+    #status .resolved { color: #8be9fd; }
+    #status .done { color: #50fa7b; }
+    #status .error { color: #ff5555; }
+
+    #legend {
+      position: fixed; bottom: 12px; left: 12px; z-index: 10;
+      background: rgba(26, 26, 46, 0.85); border: 1px solid #3a3a5e;
+      border-radius: 8px; padding: 10px 14px; backdrop-filter: blur(8px);
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    #legend .title { font-size: 11px; font-weight: 600; color: #8be9fd; margin-bottom: 2px; }
+    #legend .item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #a0a0c0; }
+    #legend .swatch { width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
+    #legend .swatch.unresolved { background: #888; opacity: 0.3; border: 1px dashed #888; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="controls">
+    <h1>🌊 WFC 3D</h1>
+    <div class="row">
+      <label>Tileset:</label>
+      <select id="tileset-select"></select>
+    </div>
+    <div class="row">
+      <label>W:</label>
+      <input type="number" id="width-input" value="4" min="1" max="16">
+      <label>H:</label>
+      <input type="number" id="height-input" value="4" min="1" max="16">
+      <label>D:</label>
+      <input type="number" id="depth-input" value="4" min="1" max="16">
+    </div>
+    <div class="row">
+      <label>Seed:</label>
+      <input type="number" id="seed-input" value="42">
+    </div>
+    <div class="row">
+      <label>Periodic:</label>
+      <input type="checkbox" id="periodic-input">
+    </div>
+    <div class="row">
+      <label>Z-Slice:</label>
+      <input type="range" id="z-slice" min="0" max="3" value="3" step="1">
+      <span id="z-slice-val" style="font-size:12px;min-width:20px">3</span>
+    </div>
+    <div class="btn-row">
+      <button id="step-btn">Step</button>
+      <button id="run-btn">Run</button>
+      <button id="reset-btn">Reset</button>
+    </div>
+    <div id="status">Ready</div>
+  </div>
+
+  <div id="legend">
+    <div class="title">Legend</div>
+    <div id="legend-items"></div>
+  </div>
+
+  <canvas id="canvas"></canvas>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // ─── State ─────────────────────────────────────────────────────────
+    let scene, camera, renderer, controls;
+    let voxelMeshes = [];        // one InstancedMesh per tile type + unresolved
+    let tileColors = [];         // hex colors from server
+    let tileNames = [];          // tile names from server
+    let currentWidth = 4, currentHeight = 4, currentDepth = 4;
+    let currentResult = null;    // latest result array (length = w*h*d)
+    let zSliceMax = 3;            // current z-slice value (show z <= zSliceMax)
+    let isSolving = false;
+    let sseConnection = null;
+    let stepMode = false;
+    const CUBE_GEO = new THREE.BoxGeometry(0.92, 0.92, 0.92);
+
+    // ─── Init Three.js ─────────────────────────────────────────────────
+    function initThree() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x1a1a2e);
+
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
+      camera.position.set(8, 8, 12);
+
+      renderer = new THREE.WebGLRenderer({
+        canvas: document.getElementById('canvas'),
+        antialias: true,
+      });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.08;
+      controls.target.set(0, 0, 0);
+
+      // Lighting
+      scene.add(new THREE.AmbientLight(0x505060));
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+      dirLight.position.set(8, 15, 10);
+      scene.add(dirLight);
+      const fillLight = new THREE.DirectionalLight(0x8899ff, 0.3);
+      fillLight.position.set(-8, -5, -10);
+      scene.add(fillLight);
+
+      // Grid helper at y=0
+      const grid = new THREE.GridHelper(20, 20, 0x333355, 0x222244);
+      grid.position.y = -0.5;
+      scene.add(grid);
+
+      animate();
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    // ─── Voxel rendering ───────────────────────────────────────────────
+    function disposeVoxels() {
+      for (const mesh of voxelMeshes) {
+        scene.remove(mesh);
+        mesh.material.dispose();
+      }
+      voxelMeshes = [];
+    }
+
+    function setupVoxels(width, height, depth, colors) {
+      disposeVoxels();
+      tileColors = colors;
+
+      const count = width * height * depth;
+
+      // One InstancedMesh per tile type
+      for (let t = 0; t < colors.length; t++) {
+        const mat = new THREE.MeshStandardMaterial({ color: colors[t] });
+        const mesh = new THREE.InstancedMesh(CUBE_GEO, mat, count);
+        mesh.count = 0;
+        mesh.frustumCulled = false;
+        scene.add(mesh);
+        voxelMeshes.push(mesh);
+      }
+
+      // Unresolved: translucent gray
+      const unresolvedMat = new THREE.MeshStandardMaterial({
+        color: 0x888888,
+        transparent: true,
+        opacity: 0.25,
+        depthWrite: false,
+      });
+      const unresolvedMesh = new THREE.InstancedMesh(CUBE_GEO, unresolvedMat, count);
+      unresolvedMesh.count = 0;
+      unresolvedMesh.frustumCulled = false;
+      scene.add(unresolvedMesh);
+      voxelMeshes.push(unresolvedMesh);
+
+      // Position camera to frame the volume
+      const maxDim = Math.max(width, height, depth);
+      const dist = maxDim * 2.2;
+      camera.position.set(dist * 0.7, dist * 0.5, dist * 0.85);
+      controls.target.set(0, 0, 0);
+      controls.update();
+    }
+
+    function updateVoxels(result, width, height, depth, zMax) {
+      if (!voxelMeshes.length) return;
+
+      // Reset all counts
+      const numMeshes = voxelMeshes.length;
+      const counts = new Array(numMeshes).fill(0);
+      const dummy = new THREE.Object3D();
+      const numTiles = tileColors.length;
+
+      const halfW = width / 2 - 0.5;
+      const halfH = height / 2 - 0.5;
+      const halfD = depth / 2 - 0.5;
+
+      for (let z = 0; z < depth && z <= zMax; z++) {
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const i = x + y * width + z * width * height;
+            const tile = result[i];
+
+            let meshIdx;
+            if (tile >= 0 && tile < numTiles) {
+              meshIdx = tile;
+            } else {
+              meshIdx = numTiles; // unresolved mesh (last one)
+            }
+
+            const mesh = voxelMeshes[meshIdx];
+            if (!mesh) continue;
+
+            dummy.position.set(x - halfW, y - halfH, z - halfD);
+            dummy.updateMatrix();
+            mesh.setMatrixAt(counts[meshIdx], dummy.matrix);
+            counts[meshIdx]++;
+          }
+        }
+      }
+
+      for (let i = 0; i < numMeshes; i++) {
+        voxelMeshes[i].count = counts[i];
+        voxelMeshes[i].instanceMatrix.needsUpdate = true;
+      }
+    }
+
+    // ─── Legend ────────────────────────────────────────────────────────
+    function updateLegend(names, colors) {
+      tileNames = names;
+      const container = document.getElementById('legend-items');
+      container.innerHTML = '';
+
+      for (let t = 0; t < names.length; t++) {
+        const item = document.createElement('div');
+        item.className = 'item';
+        const swatch = document.createElement('div');
+        swatch.className = 'swatch';
+        swatch.style.background = '#' + colors[t].toString(16).padStart(6, '0');
+        item.appendChild(swatch);
+        item.appendChild(document.createTextNode(names[t]));
+        container.appendChild(item);
+      }
+
+      // Unresolved
+      const item = document.createElement('div');
+      item.className = 'item';
+      const swatch = document.createElement('div');
+      swatch.className = 'swatch unresolved';
+      item.appendChild(swatch);
+      item.appendChild(document.createTextNode('unresolved'));
+      container.appendChild(item);
+    }
+
+    // ─── SSE Connection ───────────────────────────────────────────────
+    function startSolve(stepByStep = false) {
+      if (isSolving) return;
+      isSolving = true;
+      stepMode = stepByStep;
+
+      const width = parseInt(document.getElementById('width-input').value);
+      const height = parseInt(document.getElementById('height-input').value);
+      const depth = parseInt(document.getElementById('depth-input').value);
+      const seed = parseInt(document.getElementById('seed-input').value);
+      const periodic = document.getElementById('periodic-input').checked;
+      const tileset = document.getElementById('tileset-select').value;
+
+      currentWidth = width;
+      currentHeight = height;
+      currentDepth = depth;
+
+      // Update z-slice max
+      const zSlider = document.getElementById('z-slice');
+      zSlider.max = depth - 1;
+      zSlider.value = depth - 1;
+      zSliceMax = depth - 1;
+      document.getElementById('z-slice-val').textContent = zSliceMax;
+
+      // Setup voxel meshes
+      setupVoxels(width, height, depth, tileColors);
+
+      // Status
+      const statusEl = document.getElementById('status');
+      statusEl.className = '';
+      statusEl.textContent = 'Solving...';
+      document.getElementById('step-btn').disabled = true;
+      document.getElementById('run-btn').disabled = true;
+
+      // Build URL
+      const params = new URLSearchParams({
+        tileset,
+        width: String(width),
+        height: String(height),
+        depth: String(depth),
+        seed: String(seed),
+        periodic: String(periodic),
+        yieldEvery: stepByStep ? '1' : '1',
+      });
+
+      // Close any existing connection
+      if (sseConnection) sseConnection.close();
+
+      sseConnection = new EventSource(`/api/solve-3d?${params}`);
+
+      sseConnection.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.error) {
+          statusEl.className = 'error';
+          statusEl.textContent = `Error: ${data.error}`;
+          finishSolve();
+          return;
+        }
+
+        currentResult = data.result;
+        updateVoxels(currentResult, currentWidth, currentHeight, currentDepth, zSliceMax);
+
+        if (data.done) {
+          if (data.ok && data.complete) {
+            statusEl.className = 'done';
+            statusEl.textContent = `Done — ${data.cellsResolved}/${currentWidth * currentHeight * currentDepth} cells (${data.elapsed.toFixed(1)}ms)`;
+          } else {
+            statusEl.className = 'error';
+            statusEl.textContent = `Contradiction after attempt ${data.attempt} (${data.cellsResolved} resolved)`;
+          }
+          finishSolve();
+        } else {
+          statusEl.className = 'resolved';
+          statusEl.textContent = `Solving... ${data.cellsResolved}/${currentWidth * currentHeight * currentDepth}`;
+        }
+      };
+
+      sseConnection.onerror = () => {
+        statusEl.className = 'error';
+        statusEl.textContent = 'Connection error';
+        finishSolve();
+      };
+    }
+
+    function finishSolve() {
+      isSolving = false;
+      if (sseConnection) {
+        sseConnection.close();
+        sseConnection = null;
+      }
+      document.getElementById('step-btn').disabled = false;
+      document.getElementById('run-btn').disabled = false;
+    }
+
+    // ─── UI Wiring ─────────────────────────────────────────────────────
+    function wireUI() {
+      document.getElementById('step-btn').addEventListener('click', () => startSolve(true));
+      document.getElementById('run-btn').addEventListener('click', () => startSolve(false));
+      document.getElementById('reset-btn').addEventListener('click', () => {
+        if (sseConnection) sseConnection.close();
+        disposeVoxels();
+        currentResult = null;
+        isSolving = false;
+        document.getElementById('step-btn').disabled = false;
+        document.getElementById('run-btn').disabled = false;
+        document.getElementById('status').className = '';
+        document.getElementById('status').textContent = 'Ready';
+      });
+
+      const zSlider = document.getElementById('z-slice');
+      zSlider.addEventListener('input', () => {
+        zSliceMax = parseInt(zSlider.value);
+        document.getElementById('z-slice-val').textContent = zSliceMax;
+        if (currentResult) {
+          updateVoxels(currentResult, currentWidth, currentHeight, currentDepth, zSliceMax);
+        }
+      });
+
+      // Update z-slice range when depth changes
+      const depthInput = document.getElementById('depth-input');
+      depthInput.addEventListener('change', () => {
+        const d = parseInt(depthInput.value);
+        zSlider.max = d - 1;
+        if (parseInt(zSlider.value) > d - 1) {
+          zSlider.value = d - 1;
+          zSliceMax = d - 1;
+          document.getElementById('z-slice-val').textContent = zSliceMax;
+        }
+      });
+    }
+
+    // ─── Resize ────────────────────────────────────────────────────────
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ─── Init ──────────────────────────────────────────────────────────
+    async function init() {
+      initThree();
+      wireUI();
+
+      // Load tileset info
+      try {
+        const resp = await fetch('/api/tilesets');
+        const data = await resp.json();
+
+        const select = document.getElementById('tileset-select');
+        for (const name of Object.keys(data)) {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          select.appendChild(opt);
+        }
+
+        // Load first tileset
+        const firstName = Object.keys(data)[0];
+        const firstTs = data[firstName];
+        updateLegend(firstTs.tiles, firstTs.colors);
+        tileColors = firstTs.colors;
+
+        // Set z-slice to match default depth
+        const depth = parseInt(document.getElementById('depth-input').value);
+        document.getElementById('z-slice').max = depth - 1;
+        document.getElementById('z-slice').value = depth - 1;
+        zSliceMax = depth - 1;
+        document.getElementById('z-slice-val').textContent = zSliceMax;
+
+        // Auto-run on load
+        startSolve(false);
+      } catch (e) {
+        console.error('Failed to load tilesets:', e);
+        document.getElementById('status').textContent = 'Failed to load tilesets';
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,39 +1,59 @@
 {
   "name": "Pipes",
-  "description": "Simple 3D pipes tileset for testing WFCSolver3D",
+  "description": "3D pipes tileset for testing WFCSolver3D — empty connects to all, pipes connect axis-aligned",
   "tiles": [
-    { "id": 0, "name": "empty", "description": "Empty space" },
-    { "id": 1, "name": "pipe-straight", "description": "Straight pipe segment" },
-    { "id": 2, "name": "junction", "description": "6-way junction" }
+    { "id": 0, "name": "empty", "description": "Background, connects to all tiles" },
+    { "id": 1, "name": "pipe-x", "description": "X-axis pipe, connects pipe/junction on left/right, empty on others" },
+    { "id": 2, "name": "pipe-y", "description": "Y-axis pipe, connects pipe/junction on up/down, empty on others" },
+    { "id": 3, "name": "pipe-z", "description": "Z-axis pipe, connects pipe/junction on front/back, empty on others" },
+    { "id": 4, "name": "junction", "description": "6-way junction, connects to any pipe or junction" }
   ],
-  "weights": [1, 1, 1],
+  "weights": [0.5, 1, 1, 1, 0.2],
   "rules": [
     {
       "forTile": 0,
-      "left": [0, 1, 2],
-      "right": [0, 1, 2],
-      "up": [0, 1, 2],
-      "down": [0, 1, 2],
-      "front": [0, 1, 2],
-      "back": [0, 1, 2]
+      "left": [0, 1, 2, 3, 4],
+      "right": [0, 1, 2, 3, 4],
+      "up": [0, 1, 2, 3, 4],
+      "down": [0, 1, 2, 3, 4],
+      "front": [0, 1, 2, 3, 4],
+      "back": [0, 1, 2, 3, 4]
     },
     {
       "forTile": 1,
-      "left": [0, 1, 2],
-      "right": [0, 1, 2],
-      "up": [0, 1, 2],
-      "down": [0, 1, 2],
-      "front": [0, 1, 2],
-      "back": [0, 1, 2]
+      "left": [1, 4],
+      "right": [1, 4],
+      "up": [0],
+      "down": [0],
+      "front": [0],
+      "back": [0]
     },
     {
       "forTile": 2,
-      "left": [0, 1, 2],
-      "right": [0, 1, 2],
-      "up": [0, 1, 2],
-      "down": [0, 1, 2],
-      "front": [0, 1, 2],
-      "back": [0, 1, 2]
+      "left": [0],
+      "right": [0],
+      "up": [2, 4],
+      "down": [2, 4],
+      "front": [0],
+      "back": [0]
+    },
+    {
+      "forTile": 3,
+      "left": [0],
+      "right": [0],
+      "up": [0],
+      "down": [0],
+      "front": [3, 4],
+      "back": [3, 4]
+    },
+    {
+      "forTile": 4,
+      "left": [1, 4],
+      "right": [1, 4],
+      "up": [2, 4],
+      "down": [2, 4],
+      "front": [3, 4],
+      "back": [3, 4]
     }
   ]
 }
