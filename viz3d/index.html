@@ -128,6 +128,17 @@
     const CUBE_GEO = new THREE.BoxGeometry(0.92, 0.92, 0.92);
     const WIRE_GEO = new THREE.BoxGeometry(0.98, 0.98, 0.98);
     let boundingBox = null;
+    let tileGeometries = [];  // per-tile-type geometry (pipe cylinder, sphere, etc.)
+
+    // Pipe geometries — cylinder along each axis, baked rotation
+    // CylinderGeometry defaults to Y axis; rotate for X and Z
+    function makePipeGeometry(axis) {
+      const geo = new THREE.CylinderGeometry(0.16, 0.16, 1.0, 16);
+      if (axis === 'x') geo.rotateZ(Math.PI / 2);      // Y -> X
+      else if (axis === 'z') geo.rotateX(Math.PI / 2);  // Y -> Z
+      // 'y' stays default
+      return geo;
+    }
 
     // ─── Init Three.js ─────────────────────────────────────────────────
     function initThree() {
@@ -181,63 +192,70 @@
         mesh.material.dispose();
       }
       voxelMeshes = [];
+      for (const geo of tileGeometries) geo.dispose();
+      tileGeometries = [];
     }
 
     function setupVoxels(width, height, depth, colors) {
       disposeVoxels();
-      if (boundingBox) { scene.remove(boundingBox); boundingBox = null; }
+      if (boundingBox) { scene.remove(boundingBox); boundingBox.geometry.dispose(); boundingBox = null; }
       tileColors = colors;
 
       const count = width * height * depth;
 
-      // Tile 0 (empty): very faint wireframe — barely visible background
-      // Tiles 1+: solid colored cubes for pipes/junctions
-      for (let t = 0; t < colors.length; t++) {
-        if (t === 0) {
-          // Empty: wireframe edges only, very dim
-          const edges = new THREE.EdgesGeometry(WIRE_GEO);
-          const mat = new THREE.LineBasicMaterial({ color: 0x222244, transparent: true, opacity: 0.15 });
-          const mesh = new THREE.InstancedMesh(WIRE_GEO, mat, count);
-          mesh.count = 0;
-          mesh.frustumCulled = false;
-          // Use wireframe material
-          mesh.material = new THREE.MeshBasicMaterial({
-            color: 0x333355,
-            wireframe: true,
-            transparent: true,
-            opacity: 0.08,
-          });
-          scene.add(mesh);
-          voxelMeshes.push(mesh);
-        } else {
-          const mat = new THREE.MeshStandardMaterial({ color: colors[t] });
-          const mesh = new THREE.InstancedMesh(CUBE_GEO, mat, count);
-          mesh.count = 0;
-          mesh.frustumCulled = false;
-          scene.add(mesh);
-          voxelMeshes.push(mesh);
-        }
+      // Build per-tile geometries based on tile names from the server.
+      // Convention: tile 0 = empty (wireframe), tiles 1-3 = axis pipes, tile 4 = junction.
+      // The geometry is baked with correct orientation so instances only need position.
+      const emptyGeo = new THREE.BoxGeometry(0.98, 0.98, 0.98);
+      const pipeXGeo = makePipeGeometry('x');
+      const pipeYGeo = makePipeGeometry('y');
+      const pipeZGeo = makePipeGeometry('z');
+      const junctionGeo = new THREE.IcosahedronGeometry(0.26, 1);
+      tileGeometries = [emptyGeo, pipeXGeo, pipeYGeo, pipeZGeo, junctionGeo];
+
+      // Tile 0 (empty): faint wireframe box
+      const emptyMat = new THREE.MeshBasicMaterial({
+        color: 0x333355, wireframe: true, transparent: true, opacity: 0.06,
+      });
+      const emptyMesh = new THREE.InstancedMesh(emptyGeo, emptyMat, count);
+      emptyMesh.count = 0;
+      emptyMesh.frustumCulled = false;
+      scene.add(emptyMesh);
+      voxelMeshes.push(emptyMesh);
+
+      // Tiles 1-3: pipes — each gets its own colored InstancedMesh with axis-aligned cylinder geometry
+      for (let t = 1; t < colors.length; t++) {
+        const mat = new THREE.MeshStandardMaterial({
+          color: colors[t],
+          metalness: 0.3,
+          roughness: 0.5,
+        });
+        const mesh = new THREE.InstancedMesh(tileGeometries[t], mat, count);
+        mesh.count = 0;
+        mesh.frustumCulled = false;
+        scene.add(mesh);
+        voxelMeshes.push(mesh);
       }
 
-      // Unresolved: small translucent gray boxes
+      // Unresolved: small translucent dots
+      const unresolvedGeo = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+      tileGeometries.push(unresolvedGeo);
       const unresolvedMat = new THREE.MeshStandardMaterial({
-        color: 0x8899aa,
-        transparent: true,
-        opacity: 0.15,
-        depthWrite: false,
+        color: 0x8899aa, transparent: true, opacity: 0.15, depthWrite: false,
       });
-      const unresolvedGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
       const unresolvedMesh = new THREE.InstancedMesh(unresolvedGeo, unresolvedMat, count);
       unresolvedMesh.count = 0;
       unresolvedMesh.frustumCulled = false;
-      unresolvedMesh.userData.isUnresolved = true;
       scene.add(unresolvedMesh);
       voxelMeshes.push(unresolvedMesh);
 
       // Bounding box: shows the volume extent
       const boxGeo = new THREE.BoxGeometry(width, height, depth);
       const boxEdges = new THREE.EdgesGeometry(boxGeo);
-      boundingBox = new THREE.LineSegments(boxEdges, new THREE.LineBasicMaterial({ color: 0x4a4a6e, transparent: true, opacity: 0.5 }));
+      boxGeo.dispose();
+      boundingBox = new THREE.LineSegments(boxEdges, new THREE.LineBasicMaterial({
+        color: 0x4a4a6e, transparent: true, opacity: 0.4,
+      }));
       scene.add(boundingBox);
 
       // Position camera to frame the volume
