@@ -87,6 +87,8 @@
     <div class="row">
       <label>Periodic:</label>
       <input type="checkbox" id="periodic-input">
+      <label style="margin-left:8px">Auto-rotate:</label>
+      <input type="checkbox" id="autorotate-input" checked>
     </div>
     <div class="row">
       <label>Z-Slice:</label>
@@ -124,6 +126,8 @@
     let sseConnection = null;
     let stepMode = false;
     const CUBE_GEO = new THREE.BoxGeometry(0.92, 0.92, 0.92);
+    const WIRE_GEO = new THREE.BoxGeometry(0.98, 0.98, 0.98);
+    let boundingBox = null;
 
     // ─── Init Three.js ─────────────────────────────────────────────────
     function initThree() {
@@ -143,6 +147,8 @@
       controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
       controls.dampingFactor = 0.08;
+      controls.autoRotate = true;
+      controls.autoRotateSpeed = 0.8;
       controls.target.set(0, 0, 0);
 
       // Lighting
@@ -179,32 +185,60 @@
 
     function setupVoxels(width, height, depth, colors) {
       disposeVoxels();
+      if (boundingBox) { scene.remove(boundingBox); boundingBox = null; }
       tileColors = colors;
 
       const count = width * height * depth;
 
-      // One InstancedMesh per tile type
+      // Tile 0 (empty): very faint wireframe — barely visible background
+      // Tiles 1+: solid colored cubes for pipes/junctions
       for (let t = 0; t < colors.length; t++) {
-        const mat = new THREE.MeshStandardMaterial({ color: colors[t] });
-        const mesh = new THREE.InstancedMesh(CUBE_GEO, mat, count);
-        mesh.count = 0;
-        mesh.frustumCulled = false;
-        scene.add(mesh);
-        voxelMeshes.push(mesh);
+        if (t === 0) {
+          // Empty: wireframe edges only, very dim
+          const edges = new THREE.EdgesGeometry(WIRE_GEO);
+          const mat = new THREE.LineBasicMaterial({ color: 0x222244, transparent: true, opacity: 0.15 });
+          const mesh = new THREE.InstancedMesh(WIRE_GEO, mat, count);
+          mesh.count = 0;
+          mesh.frustumCulled = false;
+          // Use wireframe material
+          mesh.material = new THREE.MeshBasicMaterial({
+            color: 0x333355,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.08,
+          });
+          scene.add(mesh);
+          voxelMeshes.push(mesh);
+        } else {
+          const mat = new THREE.MeshStandardMaterial({ color: colors[t] });
+          const mesh = new THREE.InstancedMesh(CUBE_GEO, mat, count);
+          mesh.count = 0;
+          mesh.frustumCulled = false;
+          scene.add(mesh);
+          voxelMeshes.push(mesh);
+        }
       }
 
-      // Unresolved: translucent gray
+      // Unresolved: small translucent gray boxes
       const unresolvedMat = new THREE.MeshStandardMaterial({
-        color: 0x888888,
+        color: 0x8899aa,
         transparent: true,
-        opacity: 0.25,
+        opacity: 0.15,
         depthWrite: false,
       });
-      const unresolvedMesh = new THREE.InstancedMesh(CUBE_GEO, unresolvedMat, count);
+      const unresolvedGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+      const unresolvedMesh = new THREE.InstancedMesh(unresolvedGeo, unresolvedMat, count);
       unresolvedMesh.count = 0;
       unresolvedMesh.frustumCulled = false;
+      unresolvedMesh.userData.isUnresolved = true;
       scene.add(unresolvedMesh);
       voxelMeshes.push(unresolvedMesh);
+
+      // Bounding box: shows the volume extent
+      const boxGeo = new THREE.BoxGeometry(width, height, depth);
+      const boxEdges = new THREE.EdgesGeometry(boxGeo);
+      boundingBox = new THREE.LineSegments(boxEdges, new THREE.LineBasicMaterial({ color: 0x4a4a6e, transparent: true, opacity: 0.5 }));
+      scene.add(boundingBox);
 
       // Position camera to frame the volume
       const maxDim = Math.max(width, height, depth);
@@ -222,6 +256,7 @@
       const counts = new Array(numMeshes).fill(0);
       const dummy = new THREE.Object3D();
       const numTiles = tileColors.length;
+      const unresolvedIdx = numTiles; // last mesh is unresolved
 
       const halfW = width / 2 - 0.5;
       const halfH = height / 2 - 0.5;
@@ -237,13 +272,15 @@
             if (tile >= 0 && tile < numTiles) {
               meshIdx = tile;
             } else {
-              meshIdx = numTiles; // unresolved mesh (last one)
+              meshIdx = unresolvedIdx; // unresolved mesh (last one)
             }
 
             const mesh = voxelMeshes[meshIdx];
             if (!mesh) continue;
 
             dummy.position.set(x - halfW, y - halfH, z - halfD);
+            // Unresolved: no rotation but same scale; solid tiles: slight scale up
+            dummy.scale.setScalar(1);
             dummy.updateMatrix();
             mesh.setMatrixAt(counts[meshIdx], dummy.matrix);
             counts[meshIdx]++;
@@ -401,6 +438,10 @@
         if (currentResult) {
           updateVoxels(currentResult, currentWidth, currentHeight, currentDepth, zSliceMax);
         }
+      });
+
+      document.getElementById('autorotate-input').addEventListener('change', (e) => {
+        controls.autoRotate = e.target.checked;
       });
 
       // Update z-slice range when depth changes

@@ -22,7 +22,7 @@ const PIPES_RULES: TileRule3D[] = [
   { forTile: 3, left: [0], right: [0], up: [0], down: [0], front: [0, 3, 4], back: [0, 3, 4] },
   { forTile: 4, left: [0, 1, 4], right: [0, 1, 4], up: [0, 2, 4], down: [0, 2, 4], front: [0, 3, 4], back: [0, 3, 4] },
 ];
-const PIPES_WEIGHTS = [2, 1, 1, 1, 0.5];
+const PIPES_WEIGHTS = [1, 1.5, 1.5, 1.5, 0.8];
 const PIPES_COLORS = [0x333333, 0xff4444, 0x44ff44, 0x4488ff, 0xffdd00];
 const PIPES_NAMES = ["empty", "pipe-X", "pipe-Y", "pipe-Z", "junction"];
 
