@@ -6,9 +6,9 @@
     "declarationMap": true,
     "emitDeclarationOnly": true,
     "outDir": "./dist",
-    "rootDir": "./src-optimized",
+    "rootDir": ".",
     "allowImportingTsExtensions": false
   },
-  "include": ["src-optimized/**/*"],
-  "exclude": ["node_modules", "test", "harness", "scripts", "benchmarks", "viz", "docs", "prompts"]
+  "include": ["src/**/*", "helpers/**/*"],
+  "exclude": ["node_modules", "test", "harness", "scripts", "benchmarks", "viz", "docs", "prompts", "reference", "src-optimized"]
 }

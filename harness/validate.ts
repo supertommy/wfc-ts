@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadInputSpec, tilesetXml } from "./io.js";
 import type { InputSpec } from "./types.js";
-import { parseTileset, type Tileset } from "../src/tileset.js";
+import { parseTileset, type Tileset } from "../helpers/tileset.js";
 import { DX, DY } from "./types.js";
 
 interface Symmetry {

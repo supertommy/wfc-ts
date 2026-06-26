@@ -5,7 +5,8 @@
  * Then open http://localhost:3000
  */
 
-import { SimpleTiledModel, parseTileset, Heuristic, type StepStatus } from "../src-optimized/index.js";
+import { SimpleTiledModel, parseTileset, Heuristic } from "../helpers/index.js";
+import type { StepStatus } from "../helpers/model.js";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";

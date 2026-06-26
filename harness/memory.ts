@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { loadInputSpec, tilesetXml } from "./io.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const optEntry = pathToFileURL(join(here, "..", "src-optimized", "index.ts")).href;
+const optEntry = pathToFileURL(join(here, "..", "helpers", "index.ts")).href;
 
 const ALL = [
   "knots-standard-24",

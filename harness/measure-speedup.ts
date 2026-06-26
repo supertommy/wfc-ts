@@ -16,7 +16,7 @@ import type { SolverKind } from "./run.js";
 const here = dirname(fileURLToPath(import.meta.url));
 
 function solverEntry(kind: SolverKind): string {
-  const rel = kind === "reference" ? "../src/index.ts" : "../src-optimized/index.ts";
+  const rel = kind === "reference" ? "../reference/index.ts" : "../helpers/index.ts";
   return pathToFileURL(join(here, rel)).href;
 }
 

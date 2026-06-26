@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import { SimpleTiledModel, parseTileset } from "../src/index.js";
+// Use reference impl which has the old propagator format
+import { SimpleTiledModel, parseTileset } from "../reference/index.js";
 
 const xml = readFileSync(new URL("../performance-test/tilesets/Knots.xml", import.meta.url), "utf8");
 const ts = parseTileset(xml, "Knots");

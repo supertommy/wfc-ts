@@ -1,7 +1,7 @@
 // Find seeds that reliably complete for each candidate input spec, so the
 // committed benchmark inputs measure real solve work (not fast-fail
 // contradictions). Not part of the harness — a one-shot dev helper.
-import { SimpleTiledModel, parseTileset } from "../src/index.js";
+import { SimpleTiledModel, parseTileset } from "../helpers/index.js";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";

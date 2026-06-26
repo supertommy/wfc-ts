@@ -24,7 +24,7 @@
 
 import { readFileSync } from "node:fs";
 import { setupGlobals } from "bun-webgpu";
-import { Heuristic, mulberry32, parseTileset, SimpleTiledModel, weightedPick, type Random, type Tileset } from "../src-optimized/index.js";
+import { Heuristic, mulberry32, parseTileset, SimpleTiledModel, weightedPick, type Random, type Tileset } from "../helpers/index.js";
 
 class Exposed extends SimpleTiledModel {
   get T_(): number { return this.T; }

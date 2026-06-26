@@ -3,7 +3,7 @@
  * Gates: VALID (all constraints satisfied) + DET (same seed → same output).
  */
 
-import { SimpleTiledModel, parseTileset, Heuristic } from "../src-optimized/index.js";
+import { SimpleTiledModel, parseTileset, Heuristic } from "../helpers/index.js";
 import { validateTiling } from "../harness/validate.js";
 import { tilesetXml, checksum } from "../harness/io.js";
 import type { InputSpec } from "../harness/types.js";

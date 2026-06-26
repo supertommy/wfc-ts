@@ -10,7 +10,7 @@
 
 import { readFileSync } from "node:fs";
 import { setupGlobals } from "bun-webgpu";
-import { SimpleTiledModel, Heuristic, parseTileset, type Tileset } from "../src-optimized/index.js";
+import { SimpleTiledModel, Heuristic, parseTileset, type Tileset } from "../helpers/index.js";
 
 // WGSL: APPLY — mirror CPU: for each newlyBanned (i1,t1), for each d, for each t2 in prop[d][t1],
 //       i2 = neighbors[i1*4+d], if >=0: atomicDecr( compatible[ i2*T4 + t2*4 + d ] )

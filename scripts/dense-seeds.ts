@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { SimpleTiledModel, parseTileset } from "../src/index.js";
+import { SimpleTiledModel, parseTileset } from "../helpers/index.js";
 const xml = readFileSync(new URL("../performance-test/tilesets/Knots.xml", import.meta.url), "utf8");
 const ts = parseTileset(xml, "Knots");
 let complete = 0, fail = 0;

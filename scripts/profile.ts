@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseTileset } from "../src/tileset.js";
+import { parseTileset } from "../helpers/tileset.js";
 import { SimpleTiledModel as ProfileSTM } from "./profile-stm.js";
 
 const dir = dirname(fileURLToPath(import.meta.url));

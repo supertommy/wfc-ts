@@ -29,10 +29,10 @@ import {
   SimpleTiledModel,
   parseTileset,
   type Tileset,
-} from "../src-optimized/index.js";
-import { Heuristic } from "../src-optimized/index.js";
+} from "../helpers/index.js";
+import { Heuristic } from "../helpers/index.js";
 import { GpuWfcRunner } from "../src-optimized/webgpu/gpu-runner.js";
-import * as RefSimpleMod from "../src/simple-tiled-model.js";
+import * as RefSimpleMod from "../helpers/simple-tiled-model.js";
 
 // --- seeds chosen for completion on the sizes (found via find-seeds + spot checks; budget handles if needed)
 const SEEDS: Record<string, number> = {

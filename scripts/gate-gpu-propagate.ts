@@ -27,7 +27,7 @@ import {
   Heuristic,
   parseTileset,
   type Tileset,
-} from "../src-optimized/index.js";
+} from "../helpers/index.js";
 import { GpuPropagator, type GpuPropagatorData } from "../src-optimized/webgpu/propagate-gpu.js";
 
 class Exposed extends SimpleTiledModel {

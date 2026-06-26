@@ -15,9 +15,9 @@
 
 import { readFileSync } from "node:fs";
 import { setupGlobals } from "bun-webgpu";
-import { Heuristic, parseTileset, SimpleTiledModel, type Tileset } from "../src-optimized/index.js";
+import { Heuristic, parseTileset, SimpleTiledModel, type Tileset } from "../helpers/index.js";
 import { GpuWfcRunner } from "../src-optimized/webgpu/gpu-runner.js";
-import * as RefSimpleMod from "../src/simple-tiled-model.js";
+import * as RefSimpleMod from "../helpers/simple-tiled-model.js";
 
 const DX = [-1, 0, 1, 0];
 const DY = [0, 1, 0, -1];

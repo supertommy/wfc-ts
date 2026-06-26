@@ -8,7 +8,7 @@
 // symmetry, weights, and adjacency. Tile-variant bitmaps can be added later by
 // the visualizer without touching the solver.
 
-import { Heuristic, Model } from "../src-optimized/model.js";
+import { Heuristic, Model } from "./model.js";
 import { parseTileset, type Tileset } from "./tileset.js";
 
 // Rotation (a = 90deg) and reflection (b) action functions per symmetry class.

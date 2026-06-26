@@ -24,7 +24,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 type SolverKind = "reference" | "optimized";
 
 function solverEntry(kind: SolverKind): string {
-  const rel = kind === "reference" ? "../src/index.ts" : "../src-optimized/index.ts";
+  const rel = kind === "reference" ? "../reference/index.ts" : "../helpers/index.ts";
   return pathToFileURL(join(here, rel)).href;
 }
 

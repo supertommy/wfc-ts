@@ -20,7 +20,7 @@ export type SolverKind = "reference" | "optimized";
 
 /** Map a solver kind to its absolute entry path. */
 export function solverEntry(kind: SolverKind): string {
-  const rel = kind === "reference" ? "../src/index.ts" : "../src-optimized/index.ts";
+  const rel = kind === "reference" ? "../reference/index.ts" : "../helpers/index.ts";
   return pathToFileURL(join(here, rel)).href;
 }
 

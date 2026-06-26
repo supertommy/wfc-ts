@@ -6,7 +6,7 @@
 // measured baseline.
 
 import { performance } from "node:perf_hooks";
-import { mulberry32, type Random } from "../src/prng.js";
+import { mulberry32, type Random } from "../helpers/prng.js";
 
 export const enum Heuristic {
   Entropy = 0,

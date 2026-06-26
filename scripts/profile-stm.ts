@@ -9,7 +9,7 @@
 // the visualizer without touching the solver.
 
 import { Heuristic, Model } from "./profile-model.js";
-import { parseTileset, type Tileset } from "../src/tileset.js";
+import { parseTileset, type Tileset } from "../helpers/tileset.js";
 
 // Rotation (a = 90deg) and reflection (b) action functions per symmetry class.
 // These are the exact mxgmn definitions; `cardinality` is how many distinct

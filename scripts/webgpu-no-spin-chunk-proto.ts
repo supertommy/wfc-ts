@@ -16,8 +16,8 @@
 
 import { readFileSync } from "node:fs";
 import { setupGlobals } from "bun-webgpu";
-import { Heuristic, parseTileset, SimpleTiledModel, type Tileset } from "../src-optimized/index.js";
-import * as RefSimpleMod from "../src/simple-tiled-model.js";
+import { Heuristic, parseTileset, SimpleTiledModel, type Tileset } from "../helpers/index.js";
+import * as RefSimpleMod from "../helpers/simple-tiled-model.js";
 
 class Exposed extends SimpleTiledModel {
   get T_(): number { return this.T; }

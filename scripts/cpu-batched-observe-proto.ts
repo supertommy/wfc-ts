@@ -9,8 +9,8 @@
  */
 
 import { readFileSync } from "node:fs";
-import { Heuristic, parseTileset, SimpleTiledModel, type Tileset } from "../src-optimized/index.js";
-import { mulberry32, type Random } from "../src-optimized/prng.js";
+import { Heuristic, parseTileset, SimpleTiledModel, type Tileset } from "../helpers/index.js";
+import { mulberry32, type Random } from "../helpers/prng.js";
 import { checksum } from "../harness/io.js";
 import { loadInputSpec, tilesetXml } from "../harness/io.js";
 import { validateTiling } from "../harness/validate.js";

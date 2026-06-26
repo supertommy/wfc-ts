@@ -15,7 +15,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { Heuristic, parseTileset, SimpleTiledModel, type Tileset } from "../src-optimized/index.js";
+import { Heuristic, parseTileset, SimpleTiledModel, type Tileset } from "../helpers/index.js";
 
 class Exposed extends SimpleTiledModel {
   get T_(): number { return this.T; }

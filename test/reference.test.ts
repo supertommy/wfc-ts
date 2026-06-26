@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { SimpleTiledModel, parseTileset } from "../src/index.js";
+import { SimpleTiledModel, parseTileset } from "../reference/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const tilesetsDir = join(here, "..", "performance-test", "tilesets");

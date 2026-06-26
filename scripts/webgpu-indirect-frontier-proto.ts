@@ -15,7 +15,7 @@
 
 import { readFileSync } from "node:fs";
 import { setupGlobals } from "bun-webgpu";
-import { Heuristic, parseTileset, SimpleTiledModel, type Tileset } from "../src-optimized/index.js";
+import { Heuristic, parseTileset, SimpleTiledModel, type Tileset } from "../helpers/index.js";
 import { GpuPropagator, type GpuPropagatorData } from "../src-optimized/webgpu/propagate-gpu.js";
 
 class Exposed extends SimpleTiledModel {

@@ -26,14 +26,20 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./src-optimized/index.ts",
-      "default": "./src-optimized/index.ts"
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./helpers": {
+      "types": "./dist/helpers/index.d.ts",
+      "import": "./helpers/index.ts",
+      "default": "./helpers/index.ts"
     }
   },
-  "main": "./src-optimized/index.ts",
+  "main": "./src/index.ts",
   "types": "./dist/index.d.ts",
   "files": [
-    "src-optimized/",
+    "src/",
+    "helpers/",
     "dist/",
     "LICENSE",
     "README.md"
