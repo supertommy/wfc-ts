@@ -1,0 +1,330 @@
+# Phase 1: Core Solver
+
+> Part of [3D WFC](./README.mdx) · **8 story points**
+
+## Goal
+
+Extract the dimension-agnostic WFC algorithm into a shared `WFCEngine`, create a `Topology` abstraction for grid layout, then implement `WFCSolver3D` using these components. After this phase:
+- Existing 2D `WFCSolver` works exactly as before (harness proves this)
+- New `WFCSolver3D` can solve 3D voxel grids with 6-direction rules
+- Tree-shaking works: importing only 2D doesn't bundle 3D topology
+
+## Skills to Reference
+- `testing-gotchas` — test isolation patterns for shared engine tests
+
+## Knowledge to Reference
+- `investigations/gpu-frontier-data-structures-for-wfc.md` — understanding of the AC-4 propagation model being extracted
+
+## Verification Strategy
+unit-tests + existing harness gate
+
+- Existing 2D harness (`bun run harness/prove-harness.ts`) must pass after engine extraction
+- New unit tests verify 3D solve correctness, periodicity, thin slabs
+
+## Sprints
+
+### Sprint 0: Verification Harness — **SHIPPED**
+> **Built:** Red phase tests (test/engine.test.ts, test/solver-3d.test.ts) that fail to import as expected.
+
+**Goal:** Write failing tests for 3D solver and engine extraction BEFORE implementation.
+
+- [x] Task 0.1: Create `test/engine.test.ts` with tests that import a not-yet-existing `WFCEngine` `(1pt)`
+  - Test: engine with 2D topology produces same results as current `WFCSolver`
+  - Test: engine `stepRun()` yields correct `StepStatus` sequence
+  - These will fail to import until engine exists
+
+- [x] Task 0.2: Create `test/solver-3d.test.ts` with 3D solver tests `(1pt)`
+  - Test: `WFCSolver3D` solves a 3×3×3 grid with a simple "all tiles compatible" tileset
+  - Test: 3D periodic boundary wraps all 6 faces
+  - Test: thin slab (1×4×4) works correctly
+  - Test: determinism (same seed = same result)
+  - These will fail to import until solver-3d exists
+
+- [x] Task 0.3: Run tests, confirm they fail to compile/import `(0pt)`
+  ```bash
+  bun test test/engine.test.ts test/solver-3d.test.ts
+  # Expected: import errors or "not found"
+  ```
+
+- [x] Task 0.4: Commit test files with note "Red: tests for Phase 1" `(0pt)`
+
+**Verification:** Tests exist and fail to compile/import — they define the target.
+
+### Sprint 1: Extract Types and Topology — **SHIPPED**
+> **Built:** src/types.ts with TileRule, TileRule3D, StepStatus, Heuristic, options interfaces. src/topology.ts with Topology interface + GridTopology2D + GridTopology3D with precomputed neighbor tables.
+
+**Goal:** Create the abstraction layer without breaking existing code.
+
+- [x] Task 1.1: Create `src/types.ts` with shared types `(1pt)`
+  ```typescript
+  // src/types.ts
+  export interface TileRule {
+    forTile: number;
+    left: number[];
+    right: number[];
+    up: number[];
+    down: number[];
+  }
+
+  export interface TileRule3D {
+    forTile: number;
+    left: number[];   // -X
+    right: number[];  // +X
+    up: number[];     // +Y
+    down: number[];   // -Y
+    front: number[];  // -Z
+    back: number[];   // +Z
+  }
+
+  export interface StepStatus {
+    done: boolean;
+    observedCell?: number;
+    attempt: number;
+    cellsResolved: number;
+    ok?: boolean;
+    complete?: boolean;
+  }
+
+  export type Heuristic = 'mrv' | 'entropy' | 'scanline';
+  ```
+
+- [x] Task 1.2: Create `src/topology.ts` with Topology interface and grid implementations `(2pt)`
+  ```typescript
+  // src/topology.ts
+  export interface Topology {
+    readonly cellCount: number;
+    readonly directionCount: number;
+    /** Returns neighbor cell index for (cell, direction), or -1 if out of bounds */
+    neighbor(cell: number, dir: number): number;
+    /** Returns the opposite direction index */
+    opposite(dir: number): number;
+  }
+
+  export class GridTopology2D implements Topology {
+    readonly cellCount: number;
+    readonly directionCount = 4;
+    constructor(
+      readonly width: number,
+      readonly height: number,
+      readonly periodic: boolean
+    ) {
+      this.cellCount = width * height;
+    }
+    // DX = [-1, 0, 1, 0], DY = [0, 1, 0, -1]
+    // dir: 0=left, 1=up, 2=right, 3=down
+    neighbor(cell: number, dir: number): number { /* ... */ }
+    opposite(dir: number): number { return (dir + 2) % 4; }
+  }
+
+  export class GridTopology3D implements Topology {
+    readonly cellCount: number;
+    readonly directionCount = 6;
+    constructor(
+      readonly width: number,
+      readonly height: number,
+      readonly depth: number,
+      readonly periodic: boolean
+    ) {
+      this.cellCount = width * height * depth;
+    }
+    // DX = [-1, 1, 0, 0, 0, 0]
+    // DY = [0, 0, 1, -1, 0, 0]
+    // DZ = [0, 0, 0, 0, -1, 1]
+    // dir: 0=left, 1=right, 2=up, 3=down, 4=front, 5=back
+    neighbor(cell: number, dir: number): number { /* ... */ }
+    opposite(dir: number): number {
+      // 0↔1, 2↔3, 4↔5
+      return dir % 2 === 0 ? dir + 1 : dir - 1;
+    }
+  }
+  ```
+  - Implement `neighbor()` with proper wrap/bounds logic from `src/solver.ts:288-301`
+  - 3D indexing: `x = cell % width`, `y = (cell / width) % height | 0`, `z = (cell / (width * height)) | 0`
+
+**Demo:** `bun test test/engine.test.ts` — topology import works (engine still missing)
+
+### Sprint 2: Extract WFCEngine
+**Goal:** Move core algorithm to engine, have WFCSolver delegate to it.
+
+- [ ] Task 2.1: Create `src/engine.ts` with `WFCEngine` class `(3pt)`
+  - Move from `src/solver.ts`: wave state, compatible counts, propagator CSR, neighbors table, observe/propagate/ban/clear/run/stepRun
+  - Constructor takes: `topology: Topology`, `weights: Float64Array`, `propStart/propLen/propData` (pre-built CSR), `heuristic`
+  - **Keep all existing optimizations**: H10 snapshots, H12 restart seeds, H16 stepRun, H22 MRV bucket PQ, H23-H31 narrowing/caching
+  - Engine is dimension-agnostic: uses `topology.directionCount` instead of hardcoded 4
+
+  Key changes from current solver:
+  ```typescript
+  // OLD (src/solver.ts)
+  this.T4 = this.T * 4;
+  this.neighbors = new Int32Array(count * 4);
+
+  // NEW (src/engine.ts)
+  this.TD = this.T * topology.directionCount;
+  this.neighbors = new Int32Array(count * topology.directionCount);
+  ```
+
+  ```typescript
+  // OLD: d < 4 loops
+  for (let d = 0; d < 4; d++) { ... }
+
+  // NEW: d < D loops
+  for (let d = 0; d < this.D; d++) { ... }
+  ```
+
+- [ ] Task 2.2: Refactor `src/solver.ts` to use `WFCEngine` `(2pt)`
+  - Keep `WFCSolver` class signature identical (backward compat)
+  - Constructor: validate rules, build CSR propagator, create `GridTopology2D`, instantiate `WFCEngine`
+  - Delegate `run()`, `stepRun()`, `result()`, getters to engine
+  - `buildPropagator()` stays in solver (converts `TileRule[]` to CSR format)
+
+  ```typescript
+  // src/solver.ts (after refactor)
+  import { WFCEngine } from './engine.js';
+  import { GridTopology2D } from './topology.js';
+  import type { TileRule, Heuristic, StepStatus } from './types.js';
+
+  export class WFCSolver {
+    private engine: WFCEngine;
+
+    constructor(options: WFCSolverOptions) {
+      const { width, height, periodic, weights, rules, heuristic } = options;
+      const topology = new GridTopology2D(width, height, periodic);
+      const { propStart, propLen, propData } = this.buildPropagator(rules, weights.length);
+      this.engine = new WFCEngine(topology, weights, propStart, propLen, propData, heuristic);
+    }
+
+    run(seed: number, limit = -1): boolean {
+      return this.engine.run(seed, limit);
+    }
+    // ... delegate other methods
+  }
+  ```
+
+**Demo:**
+```bash
+bun run typecheck && bun run harness/prove-harness.ts
+# Must pass — 2D behavior unchanged
+```
+
+### Sprint 3: Implement WFCSolver3D
+**Goal:** Add 3D solver using the shared engine.
+
+- [ ] Task 3.1: Create `src/solver-3d.ts` with `WFCSolver3D` class `(2pt)`
+  ```typescript
+  // src/solver-3d.ts
+  import { WFCEngine } from './engine.js';
+  import { GridTopology3D } from './topology.js';
+  import type { TileRule3D, Heuristic, StepStatus } from './types.js';
+
+  export interface WFCSolver3DOptions {
+    width: number;
+    height: number;
+    depth: number;
+    periodic: boolean;
+    weights: number[] | Float64Array;
+    rules: TileRule3D[];
+    heuristic?: Heuristic;
+  }
+
+  export class WFCSolver3D {
+    private engine: WFCEngine;
+    private MX: number;
+    private MY: number;
+    private MZ: number;
+
+    constructor(options: WFCSolver3DOptions) {
+      const { width, height, depth, periodic, weights, rules, heuristic } = options;
+      this.MX = width;
+      this.MY = height;
+      this.MZ = depth;
+      const topology = new GridTopology3D(width, height, depth, periodic);
+      const { propStart, propLen, propData } = this.buildPropagator(rules, weights.length);
+      this.engine = new WFCEngine(topology, new Float64Array(weights), propStart, propLen, propData, heuristic ?? 'mrv');
+    }
+
+    private buildPropagator(rules: TileRule3D[], T: number) {
+      // 6 directions: left=0, right=1, up=2, down=3, front=4, back=5
+      const propagator: number[][][] = [[], [], [], [], [], []];
+      for (let t = 0; t < T; t++) {
+        const rule = rules.find(r => r.forTile === t);
+        propagator[0][t] = rule?.left ?? [];
+        propagator[1][t] = rule?.right ?? [];
+        propagator[2][t] = rule?.up ?? [];
+        propagator[3][t] = rule?.down ?? [];
+        propagator[4][t] = rule?.front ?? [];
+        propagator[5][t] = rule?.back ?? [];
+      }
+      // Convert to CSR (same logic as 2D, just D=6)
+      // ...
+    }
+
+    run(seed: number, limit = -1): boolean { return this.engine.run(seed, limit); }
+    stepRun(seed: number, limit = -1): Generator<StepStatus, boolean, unknown> { return this.engine.stepRun(seed, limit); }
+    result(): Int32Array { return this.engine.result(); }
+    get width() { return this.MX; }
+    get height() { return this.MY; }
+    get depth() { return this.MZ; }
+  }
+  ```
+
+- [ ] Task 3.2: Update `src/index.ts` with 3D exports `(1pt)`
+  ```typescript
+  // src/index.ts
+  export { WFCSolver, type WFCSolverOptions } from './solver.js';
+  export { WFCSolver3D, type WFCSolver3DOptions } from './solver-3d.js';
+  export type { TileRule, TileRule3D, StepStatus, Heuristic } from './types.js';
+  ```
+
+- [ ] Task 3.3: Create a simple 3D tileset for testing `(1pt)`
+  - Create `performance-test/tilesets-3d/Pipes/` with a 3-tile "pipes" tileset:
+    - Tile 0: empty (connects to empty or pipe ends)
+    - Tile 1: straight pipe (connects along axis)
+    - Tile 2: junction (connects in all 6 directions)
+  - Create `performance-test/inputs-3d/pipes-4.json` (4×4×4 grid, seed, etc.)
+
+**Demo:**
+```bash
+bun test test/solver-3d.test.ts
+# All 3D tests should pass
+```
+
+### Sprint 4: Verify and Gate
+**Goal:** Run all gates to confirm nothing broke.
+
+- [ ] Task 4.1: Run full verification suite `(0pt)`
+  ```bash
+  bun run typecheck
+  bun test
+  bun run harness/prove-harness.ts
+  ```
+  All must pass.
+
+- [ ] Task 4.2: Verify tree-shaking works `(1pt)`
+  ```bash
+  # Bundle only 2D
+  bun build src/solver.ts --minify --outfile=/tmp/2d-only.js
+  # Should NOT contain "GridTopology3D" or "depth"
+  grep -c "GridTopology3D" /tmp/2d-only.js  # expect 0
+
+  # Bundle only 3D
+  bun build src/solver-3d.ts --minify --outfile=/tmp/3d-only.js
+  # Should NOT contain "GridTopology2D"
+  grep -c "GridTopology2D" /tmp/3d-only.js  # expect 0
+  ```
+
+- [ ] Task 4.3: Commit with message "feat: add WFCSolver3D with shared engine" `(0pt)`
+
+**Demo:**
+```bash
+bun run harness/prove-harness.ts
+# FINAL: PASS
+```
+
+## Phase Verification
+
+After this phase:
+1. `bun run typecheck` passes
+2. `bun test` passes (including new engine and 3D tests)
+3. `bun run harness/prove-harness.ts` passes (2D behavior unchanged)
+4. Tree-shaking verified via bundle grep
+5. `WFCSolver3D` can solve a 4×4×4 pipes tileset deterministically
