@@ -6,7 +6,7 @@
 // three-wfc has no periodic support (borders always clip); comparisons use non-periodic only.
 // three-wfc uses its own indexedPrng (seeded).
 
-import type { Tileset } from "../../../src-optimized/tileset.js";
+import type { Tileset } from "../../../helpers/tileset.js";
 import { WFC2DBuffer } from "../three-wfc-core/WFC2DBuffer.js";
 import { WFCTile2D } from "../three-wfc-core/WFCTile2D.js";
 import { buildExpandedPropagator } from "./lite.js";

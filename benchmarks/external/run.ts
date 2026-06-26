@@ -10,9 +10,9 @@ import { performance } from "node:perf_hooks";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Tileset } from "../../src-optimized/tileset.js";
-import { parseTileset } from "../../src-optimized/tileset.js";
-import { SimpleTiledModel } from "../../src-optimized/simple-tiled-model.js";
+import type { Tileset } from "../../helpers/tileset.js";
+import { parseTileset } from "../../helpers/tileset.js";
+import { SimpleTiledModel } from "../../helpers/simple-tiled-model.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..", "..");

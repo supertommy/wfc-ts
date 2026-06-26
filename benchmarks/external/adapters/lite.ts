@@ -6,7 +6,7 @@
 // Dirs: 0=up,1=right,2=down,3=left
 // NOTE: always non-periodic (clips); no weights; max 32 tiles.
 
-import type { Tileset } from "../../../src-optimized/tileset.js";
+import type { Tileset } from "../../../helpers/tileset.js";
 import { WFC } from "@zakkster/lite-wfc";
 
 export interface LiteSolver {

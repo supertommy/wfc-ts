@@ -10,12 +10,12 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
-import { parseTileset } from "../../src-optimized/tileset.js";
+import { parseTileset } from "../../helpers/tileset.js";
 import { createKchapelierModel } from "./adapters/kchapelier.js";
 import { createBlazinModel } from "./adapters/blazin.js";
 import { createLiteModel, countTilesAfterSubset } from "./adapters/lite.js";
 import { createThreeModel } from "./adapters/three.js";
-import { mulberry32 } from "../../src-optimized/prng.js";
+import { mulberry32 } from "../../helpers/prng.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(here, "..", "..");

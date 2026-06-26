@@ -2,7 +2,7 @@
 // Reads reference source for API: SimpleTiledModel(data, subsetName, w, h, periodic)
 // data mirrors mxgmn XML: raw tiles with symmetry+weight+bitmap(dummy), neighbors as strings, subsets obj.
 
-import type { Tileset } from "../../../src-optimized/tileset.js";
+import type { Tileset } from "../../../helpers/tileset.js";
 import * as WFCmod from "wavefunctioncollapse";
 
 const SimpleTiledModelCtor: any = (WFCmod as any).SimpleTiledModel;

@@ -6,7 +6,7 @@
 // Since knots* are exactly representable (bicliques), faithful on those.
 // For inputs that conflict (non-rectangular), returns canRun=false with specific conflict reason.
 
-import type { Tileset } from "../../../src-optimized/tileset.js";
+import type { Tileset } from "../../../helpers/tileset.js";
 import WFCdefault from "blazinwfc";
 import { buildExpandedPropagator } from "./lite.js";
 
