@@ -9,22 +9,77 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = 3457;
 
-// Pipes 3D tileset: 5 tiles with directional pipe constraints
-// Tile 0: empty — background, connects to all tiles
-// Tile 1: X-axis pipe — connects pipe/junction/empty on left/right, empty on others
-// Tile 2: Y-axis pipe — connects pipe/junction/empty on up/down, empty on others
-// Tile 3: Z-axis pipe — connects pipe/junction/empty on front/back, empty on others
-// Tile 4: 6-way junction — connects to any pipe or junction or empty
-const PIPES_RULES: TileRule3D[] = [
-  { forTile: 0, left: [0, 1, 2, 3, 4], right: [0, 1, 2, 3, 4], up: [0, 1, 2, 3, 4], down: [0, 1, 2, 3, 4], front: [0, 1, 2, 3, 4], back: [0, 1, 2, 3, 4] },
-  { forTile: 1, left: [0, 1, 4], right: [0, 1, 4], up: [0], down: [0], front: [0], back: [0] },
-  { forTile: 2, left: [0], right: [0], up: [0, 2, 4], down: [0, 2, 4], front: [0], back: [0] },
-  { forTile: 3, left: [0], right: [0], up: [0], down: [0], front: [0, 3, 4], back: [0, 3, 4] },
-  { forTile: 4, left: [0, 1, 4], right: [0, 1, 4], up: [0, 2, 4], down: [0, 2, 4], front: [0, 3, 4], back: [0, 3, 4] },
+// ─── Pipes tileset (connector / "socket" based) ────────────────────
+// Each tile is defined by which of its 6 faces have a pipe opening.
+// Face/direction order matches the 3D topology: 0=left 1=right 2=up
+// 3=down 4=front 5=back.  Adjacency is GENERATED from the sockets by
+// one rule: two tiles may sit face-to-face iff their touching faces
+// agree — an opening must meet an opening, a wall must meet a wall.
+// This guarantees every pipe segment connects to a real neighbour
+// (no stubs dying into empty), so the network always reads as connected.
+const OPP = [1, 0, 3, 2, 5, 4]; // opposite face of each direction
+
+interface PipeTile {
+  name: string;
+  open: number[]; // 6 flags; 1 = pipe opening on that face
+  weight: number;
+  color: number;
+}
+
+function faces(...f: number[]): number[] {
+  const m = [0, 0, 0, 0, 0, 0];
+  for (const i of f) m[i] = 1;
+  return m;
+}
+
+const PIPE_X_COLOR = 0xff5a6e; // red   — runs along X (left↔right)
+const PIPE_Y_COLOR = 0x4ade80; // green — runs along Y (up↔down)
+const PIPE_Z_COLOR = 0x49c5ff; // blue  — runs along Z (front↔back)
+const EMPTY_COLOR = 0x333355;
+
+// Straights-only socket family. Each pipe tile opens on one axis' two
+// opposite faces, so an interior pipe forces the SAME pipe on both ends —
+// continuous lines that span the volume edge-to-edge, never a stub dying
+// into empty. This family is 100% solvable on this restart-only engine
+// (richer caps/elbows/tees need backtracking the engine doesn't have).
+function buildPipeTiles(): PipeTile[] {
+  return [
+    { name: "empty", open: faces(), weight: 1, color: EMPTY_COLOR },
+    { name: "pipe-X", open: faces(0, 1), weight: 2, color: PIPE_X_COLOR },
+    { name: "pipe-Y", open: faces(2, 3), weight: 2, color: PIPE_Y_COLOR },
+    { name: "pipe-Z", open: faces(4, 5), weight: 2, color: PIPE_Z_COLOR },
+  ];
+}
+
+function buildRulesFromTiles(tiles: PipeTile[]): TileRule3D[] {
+  const dirKeys = ["left", "right", "up", "down", "front", "back"] as const;
+  return tiles.map((tile, i) => {
+    const rule = { forTile: i } as TileRule3D;
+    for (let d = 0; d < 6; d++) {
+      const allowed: number[] = [];
+      for (let j = 0; j < tiles.length; j++) {
+        // tile j sits on direction d of tile i; their touching faces are
+        // tile i's face d and tile j's face OPP[d] — they must agree.
+        if (tiles[j].open[OPP[d]] === tile.open[d]) allowed.push(j);
+      }
+      rule[dirKeys[d]] = allowed;
+    }
+    return rule;
+  });
+}
+
+const PIPE_TILES = buildPipeTiles();
+const PIPES_RULES = buildRulesFromTiles(PIPE_TILES);
+const PIPES_WEIGHTS = PIPE_TILES.map((t) => t.weight);
+const PIPES_COLORS = PIPE_TILES.map((t) => t.color);
+const PIPES_NAMES = PIPE_TILES.map((t) => t.name);
+const PIPES_SOCKETS = PIPE_TILES.map((t) => t.open);
+const PIPES_LEGEND = [
+  { name: "empty", color: EMPTY_COLOR },
+  { name: "pipe-X (red)", color: PIPE_X_COLOR },
+  { name: "pipe-Y (green)", color: PIPE_Y_COLOR },
+  { name: "pipe-Z (blue)", color: PIPE_Z_COLOR },
 ];
-const PIPES_WEIGHTS = [1, 1.5, 1.5, 1.5, 0.8];
-const PIPES_COLORS = [0x333333, 0xff4444, 0x44ff44, 0x4488ff, 0xffdd00];
-const PIPES_NAMES = ["empty", "pipe-X", "pipe-Y", "pipe-Z", "junction"];
 
 interface TilesetConfig {
   name: string;
@@ -32,6 +87,8 @@ interface TilesetConfig {
   weights: number[];
   colors: number[];
   tileNames: string[];
+  sockets: number[][];
+  legend: { name: string; color: number }[];
 }
 
 const tilesets: Record<string, TilesetConfig> = {
@@ -41,6 +98,8 @@ const tilesets: Record<string, TilesetConfig> = {
     weights: PIPES_WEIGHTS,
     colors: PIPES_COLORS,
     tileNames: PIPES_NAMES,
+    sockets: PIPES_SOCKETS,
+    legend: PIPES_LEGEND,
   },
 };
 
@@ -51,12 +110,14 @@ const server = Bun.serve({
 
     // API: Get tileset info
     if (url.pathname === "/api/tilesets") {
-      const info: Record<string, { name: string; tiles: string[]; colors: number[] }> = {};
+      const info: Record<string, { name: string; tiles: string[]; colors: number[]; sockets: number[][]; legend: { name: string; color: number }[] }> = {};
       for (const [key, ts] of Object.entries(tilesets)) {
         info[key] = {
           name: ts.name,
           tiles: ts.tileNames,
           colors: ts.colors,
+          sockets: ts.sockets,
+          legend: ts.legend,
         };
       }
       return Response.json(info);
