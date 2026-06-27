@@ -163,27 +163,29 @@ describe("validate3D — Sprint 0 verification tests (defines Phase 3 harness co
   });
 
   it("periodic=false never checks out-of-bounds neighbors (boundary cells have fewer directed checks)", () => {
-    // Rule that forbids any neighbor on -X (left) and -Z (front)
+    // Rule that forbids any neighbor on +Y (up) and -Y (down).
+    // With height=1, up/down neighbors are ALWAYS out-of-bounds for every cell (non-periodic).
     const rules: TileRule3D[] = [{
       forTile: 0,
-      left: [],   // no tile allowed to the left
+      left: [0],
       right: [0],
-      up: [0],
-      down: [0],
-      front: [],  // no tile allowed in front
+      up: [],   // no tile allowed upward
+      down: [], // no tile allowed downward
+      front: [0],
       back: [0],
     }];
     const w = 2, h = 1, d = 2;
 
     const res = makeFilledResult(w, h, d, 0);
 
-    // non-periodic: the left-face cells have no left neighbor => their empty-left rule is never consulted => valid
+    // non-periodic: up/down are oob for all cells (h=1) => empty up/down rules never consulted => valid.
+    // (non-periodic skips ONLY true oob; it would violate on any in-bound neighbor in an empty-list dir.)
     const nonPer = validate3D(res, w, h, d, rules, false, true);
     expect(nonPer.valid).toBe(true);
-    // fewer checks than a full interior would require
+    // fewer checks than a full interior would require (h=1 means no y-dir checks ever)
     expect(nonPer.adjacencyChecks).toBeLessThan(2 * 2 * 6); // rough
 
-    // periodic would force wrap checks and hit the empty lists => invalid
+    // periodic would force y-wrap (even h=1) + other wraps and hit the empty lists => invalid
     const per = validate3D(res, w, h, d, rules, true, true);
     expect(per.valid).toBe(false);
   });

@@ -23,7 +23,7 @@ hybrid (script-based validation + browser verification for learning guide)
 ### Sprint 0: Verification Harness
 **Goal:** Define what "correct 3D output" means.
 
-- [ ] Task 0.1: Create `harness/validate-3d.ts` with 3D adjacency checker `(1pt)`
+- [x] Task 0.1: Create `harness/validate-3d.ts` with 3D adjacency checker `(1pt)`
   - Export `validate3D(result, width, height, depth, rules, periodic, complete = true)`.
   - Match the existing 2D harness contract: report `valid`, `violations`, directed `adjacencyChecks`, `unresolvedCells`, and `firstViolation`.
   - Validate inputs before walking: positive integer dimensions, `result.length === width * height * depth`, and rule tile ids/lists inside range.
