@@ -176,6 +176,65 @@ Use this when success matters more than raw speed. Backtracking can solve hard l
 
 `WFCSolver3D` accepts the same `search` option.
 
+## 3D Support
+
+Use `WFCSolver3D` for voxel grids. Rules have six directions and results are flattened as `x + y * width + z * width * height`.
+
+```typescript
+import { WFCSolver3D, type TileRule3D } from 'wfc-ts';
+
+const rules: TileRule3D[] = [
+  // 0 = empty, 1 = solid. This simple example allows either tile anywhere.
+  { forTile: 0, left: [0, 1], right: [0, 1], up: [0, 1], down: [0, 1], front: [0, 1], back: [0, 1] },
+  { forTile: 1, left: [0, 1], right: [0, 1], up: [0, 1], down: [0, 1], front: [0, 1], back: [0, 1] },
+];
+
+const width = 8;
+const height = 8;
+const depth = 8;
+
+const solver = new WFCSolver3D({
+  width,
+  height,
+  depth,
+  periodic: false,
+  weights: [1, 1],
+  rules,
+});
+
+if (solver.run(42)) {
+  const voxels = solver.result();
+  for (let z = 0; z < depth; z++) {
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const tile = voxels[x + y * width + z * width * height];
+        // Render voxel at (x, y, z) with tile type.
+      }
+    }
+  }
+}
+```
+
+Direction names map to axes like this:
+
+| rule field | axis |
+|---|---|
+| `left` | -X |
+| `right` | +X |
+| `up` | +Y |
+| `down` | -Y |
+| `front` | -Z |
+| `back` | +Z |
+
+For step-by-step 3D visualization:
+
+```bash
+bun run viz3d/server.ts
+# Open http://localhost:3457
+```
+
+See [docs/3d-wfc.md](docs/3d-wfc.md) for 3D tileset design and validation notes.
+
 ## Benchmarks
 
 Measured on macOS arm64 with Bun 1.3. Median of 5 runs, model construction excluded.
