@@ -57,8 +57,10 @@ private applyChoice(node: number, chosenTile: number): boolean;
 - [x] Task 1.3: Rewrite `observe(node, random)` to call `computeDistribution`, `weightedPick`, and `applyChoice`; behavior in restart mode must be identical `(1pt)`.
 **Demo:** `bun test` passes existing tests. The diff should not mention backtracking yet except helper extraction.
 
-### Sprint 2: Add checkpoint snapshot fields and restore helper
-- [ ] Task 2.1: Add checkpoint buffers to `WFCEngine` private fields near H10 snapshot fields `(2pt)`:
+### Sprint 2: Add checkpoint snapshot fields and restore helper — **SHIPPED**
+> **Built:** Added full-state checkpoint storage plus save/restore helpers that reset dirty worklists and rebuild selection structures from restored state.
+
+- [x] Task 2.1: Add checkpoint buffers to `WFCEngine` private fields near H10 snapshot fields `(2pt)`:
 
 ```ts
 private checkpointWave: Uint8Array[] = [];
@@ -77,11 +79,11 @@ private backtrackCount = 0;
 
   - This first version may use arrays because it is opt-in; Phase 4 measures and optimizes.
   - DO NOT reuse `stackI`/`stackT`; that is the propagation worklist, not a decision stack.
-- [ ] Task 2.2: Implement `private saveCheckpoint(node: number, choices: number[]): void` `(2pt)`.
+- [x] Task 2.2: Implement `private saveCheckpoint(node: number, choices: number[]): void` `(2pt)`.
   - Copy live `wave`, `compatible`, `sumsOfOnes`, `observed`, and entropy arrays when present.
   - Store `observedSoFar`, `node`, `choices`, and `nextChoice=1` because index 0 is tried first.
   - Enforce `maxBacktrackDepth`: if at depth, drop the oldest checkpoint and its buffers.
-- [ ] Task 2.3: Implement `private restoreCheckpoint(depth: number): void` `(2pt)`.
+- [x] Task 2.3: Implement `private restoreCheckpoint(depth: number): void` `(2pt)`.
   - Restore arrays with `.set(...)`.
   - Set `stacksize = 0`, increment `heapGen`, set `dirtyCount = 0`, restore `observedSoFar`.
   - Rebuild `entropyHeap` or `mrvBuckets` exactly like `clear()` does at `src/engine.ts:318`.

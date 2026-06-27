@@ -118,6 +118,20 @@ export class WFCEngine {
   private observed0: Int32Array;
   private hasFixpoint = false;
 
+  // Backtracking decision checkpoints (opt-in)
+  private checkpointWave: Uint8Array[] = [];
+  private checkpointCompatible: Array<Uint8Array | Uint16Array | Int32Array> = [];
+  private checkpointSumsOfOnes: Array<Uint8Array | Uint16Array | Int32Array> = [];
+  private checkpointObserved: Int32Array[] = [];
+  private checkpointSumsOfWeights: Float64Array[] = [];
+  private checkpointSumsOfWeightLogWeights: Float64Array[] = [];
+  private checkpointEntropies: Float64Array[] = [];
+  private checkpointObservedSoFar: number[] = [];
+  private checkpointNodes: number[] = [];
+  private checkpointChoices: number[][] = [];
+  private checkpointNextChoice: number[] = [];
+  private backtrackCount = 0;
+
   // Auto-narrowed constructors
   private CompatibleCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor;
   private SumsOfOnesCtor: Uint8ArrayConstructor | Uint16ArrayConstructor | Int32ArrayConstructor;
@@ -334,6 +348,68 @@ export class WFCEngine {
       this.mrvBuckets.clear();
       for (let i = 0; i < count; i++) {
         const s = sumsOfOnes[i];
+        if (s > 1) this.mrvBuckets.updateCell(i, s);
+      }
+    }
+  }
+
+  private saveCheckpoint(node: number, choices: number[]): void {
+    if (this.maxBacktrackDepth <= 0) return;
+
+    while (this.checkpointWave.length >= this.maxBacktrackDepth) {
+      this.checkpointWave.shift();
+      this.checkpointCompatible.shift();
+      this.checkpointSumsOfOnes.shift();
+      this.checkpointObserved.shift();
+      this.checkpointSumsOfWeights.shift();
+      this.checkpointSumsOfWeightLogWeights.shift();
+      this.checkpointEntropies.shift();
+      this.checkpointObservedSoFar.shift();
+      this.checkpointNodes.shift();
+      this.checkpointChoices.shift();
+      this.checkpointNextChoice.shift();
+    }
+
+    this.checkpointWave.push(this.wave.slice());
+    this.checkpointCompatible.push(this.compatible.slice());
+    this.checkpointSumsOfOnes.push(this.sumsOfOnes.slice());
+    this.checkpointObserved.push(this.observed.slice());
+    this.checkpointSumsOfWeights.push(this.heuristic === HeuristicEnum.entropy ? this.sumsOfWeights.slice() : new Float64Array(0));
+    this.checkpointSumsOfWeightLogWeights.push(this.heuristic === HeuristicEnum.entropy ? this.sumsOfWeightLogWeights.slice() : new Float64Array(0));
+    this.checkpointEntropies.push(this.heuristic === HeuristicEnum.entropy ? this.entropies.slice() : new Float64Array(0));
+    this.checkpointObservedSoFar.push(this.observedSoFar);
+    this.checkpointNodes.push(node);
+    this.checkpointChoices.push(choices.slice());
+    this.checkpointNextChoice.push(1);
+  }
+
+  private restoreCheckpoint(depth: number): void {
+    this.wave.set(this.checkpointWave[depth]);
+    this.compatible.set(this.checkpointCompatible[depth]);
+    this.sumsOfOnes.set(this.checkpointSumsOfOnes[depth]);
+    this.observed.set(this.checkpointObserved[depth]);
+    if (this.heuristic === HeuristicEnum.entropy) {
+      this.sumsOfWeights.set(this.checkpointSumsOfWeights[depth]);
+      this.sumsOfWeightLogWeights.set(this.checkpointSumsOfWeightLogWeights[depth]);
+      this.entropies.set(this.checkpointEntropies[depth]);
+    }
+
+    this.stacksize = 0;
+    this.heapGen++;
+    this.dirtyCount = 0;
+    this.observedSoFar = this.checkpointObservedSoFar[depth];
+
+    if (this.heuristic === HeuristicEnum.entropy && this.entropyHeap) {
+      this.entropyHeap.clear();
+      for (let i = 0; i < this.count; i++) {
+        if (this.sumsOfOnes[i] > 1) {
+          this.entropyHeap.push(i, this.entropies[i]);
+        }
+      }
+    } else if (this.heuristic === HeuristicEnum.mrv && this.mrvBuckets) {
+      this.mrvBuckets.clear();
+      for (let i = 0; i < this.count; i++) {
+        const s = this.sumsOfOnes[i];
         if (s > 1) this.mrvBuckets.updateCell(i, s);
       }
     }
