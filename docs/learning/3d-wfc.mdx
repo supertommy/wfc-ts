@@ -1,0 +1,144 @@
+---
+title: 3D WFC
+summary: Learn how 2D Wave Function Collapse extends to voxel grids with six-direction rules.
+---
+
+import Neighborhood3D from './components/Neighborhood3D.tsx'
+
+# Understanding 3D Wave Function Collapse
+
+## Hook
+
+2D WFC asks four local questions: what can touch left, right, up, and down?
+
+3D WFC asks six. Every voxel also has a front and back neighbor. That sounds like a small change, but it changes how you author rules, debug failures, and look at the result.
+
+The core idea stays the same: every cell starts with every tile possible, one cell collapses, then constraints remove impossible tiles nearby.
+
+## 1. From 2D to 3D
+
+In 2D, each cell is a square in a plane. In 3D, each cell is a voxel in a volume.
+
+| Concept | 2D | 3D |
+|---|---|---|
+| Cells | `width × height` | `width × height × depth` |
+| Neighbor fields | `left`, `right`, `up`, `down` | plus `front`, `back` |
+| Result index | `x + y * width` | `x + y * width + z * width * height` |
+| Debug view | image | orbit camera or Z slice |
+
+The solver does not know what a voxel means. It only knows that a tile in one cell must allow the tile in each neighboring cell.
+
+## 2. Direction convention
+
+<Neighborhood3D />
+
+wfc-ts uses compass-style names for 3D directions:
+
+| Direction | Axis | Index |
+|-----------|------|-------|
+| left | -X | 0 |
+| right | +X | 1 |
+| up | +Y | 2 |
+| down | -Y | 3 |
+| front | -Z | 4 |
+| back | +Z | 5 |
+
+Remember it like a camera looking at a block: left/right and up/down are screen-like, front/back move through depth.
+
+## 3. Defining 3D rules
+
+Each rule says which tile ids may appear in each direction from one tile:
+
+```typescript
+import type { TileRule3D } from 'wfc-ts';
+
+const rule: TileRule3D = {
+  forTile: 0,
+  left: [0, 1],
+  right: [0, 1],
+  up: [0],
+  down: [0],
+  front: [0, 1],
+  back: [0, 1],
+};
+```
+
+Read one field out loud: "when tile 0 is in the center, only tile 0 may be above it."
+
+Rules are directed. If tile A allows tile B on its right, tile B should usually allow tile A on its left. For socket tilesets, generate both sides from face data so you do not hand-write asymmetric mistakes.
+
+## 4. Grid indexing
+
+3D results are a flat `Int32Array`, not nested arrays.
+
+```typescript
+const index = x + y * width + z * width * height;
+
+const x = index % width;
+const y = Math.floor(index / width) % height;
+const z = Math.floor(index / (width * height));
+```
+
+That formula is the bridge between WFC output and your renderer. If a tile id is at `voxels[index]`, render it at `(x, y, z)`.
+
+## 5. Try it: simple 3D solve
+
+This example allows empty or solid anywhere. It is intentionally simple so the shape of the API is clear.
+
+```typescript
+import { WFCSolver3D, type TileRule3D } from 'wfc-ts';
+
+const rules: TileRule3D[] = [
+  { forTile: 0, left: [0, 1], right: [0, 1], up: [0, 1], down: [0, 1], front: [0, 1], back: [0, 1] },
+  { forTile: 1, left: [0, 1], right: [0, 1], up: [0, 1], down: [0, 1], front: [0, 1], back: [0, 1] },
+];
+
+const solver = new WFCSolver3D({
+  width: 4,
+  height: 4,
+  depth: 4,
+  periodic: false,
+  weights: [1, 1],
+  rules,
+});
+
+if (solver.run(42)) {
+  const voxels = solver.result();
+  console.log(voxels.length); // 64
+}
+```
+
+For a richer live demo, run:
+
+```bash
+bun run viz3d/server.ts
+# Open http://localhost:3457
+```
+
+The visualizer shows socket pipes, orbit controls, step/run, and a Z-slice slider so you can inspect the inside of the volume.
+
+## 6. Common patterns
+
+### Pipes
+
+Pipes are face-socket tiles. An opening must meet an opening; a closed wall must meet a closed wall. The shipped 3D fixture uses empty, straights, elbows, tees, and a six-way junction.
+
+### Terrain layers
+
+Use `down` and `up` to encode vertical stacks: foundation below floor, floor below wall, wall below roof. Non-periodic boundaries let you make special top or bottom tiles.
+
+### Voxel buildings
+
+Rooms, corridors, stairs, and facades are all local adjacency constraints. Start with a tiny 4³ fixture, validate it, then scale up.
+
+## Retrieval close
+
+Remember it like this:
+
+- 3D WFC is still local constraint propagation.
+- Six named fields replace four.
+- The flat index is `x + y * width + z * width * height`.
+- Empty direction lists are only boundary-safe when the neighbor is truly out of bounds.
+- Use the 3D validator before trusting a new tileset.
+
+If you can explain those five lines, you understand the 3D extension.
