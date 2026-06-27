@@ -86,11 +86,13 @@ private readonly maxBacktrackDepth: number;
   - Normalize defaults to restart-only unless `search.strategy === 'backtrack'`.
 **Demo:** `bun run typecheck && bun test` passes all pre-existing tests; the new red tests still fail only on missing behavior.
 
-### Sprint 3: Add rich socket fixtures for tests only
-- [ ] Task 3.1: In `test/pipe-sockets-3d.test.ts`, implement local test helper `buildRichPipeTiles()` that returns empty, straights, elbows, tees, and six-way junction sockets `(1pt)`.
+### Sprint 3: Add rich socket fixtures for tests only — **SHIPPED**
+> **Built:** Verified the rich 3D socket fixture generator and opening-match validator that were created with the Sprint 0 red harness.
+
+- [x] Task 3.1: In `test/pipe-sockets-3d.test.ts`, implement local test helper `buildRichPipeTiles()` that returns empty, straights, elbows, tees, and six-way junction sockets `(1pt)`.
   - Use direction order `0=left, 1=right, 2=up, 3=down, 4=front, 5=back`.
   - Use `OPP = [1, 0, 3, 2, 5, 4]`.
-- [ ] Task 3.2: Add `assertOpeningsMatch(result, sockets, width, height, depth)` that checks every interior opening meets an opening on the neighbor's opposite face `(1pt)`.
+- [x] Task 3.2: Add `assertOpeningsMatch(result, sockets, width, height, depth)` that checks every interior opening meets an opening on the neighbor's opposite face `(1pt)`.
   - DO NOT treat boundary openings as violations in non-periodic mode; the topology skips out-of-bounds neighbors.
 **Demo:** `bun test test/pipe-sockets-3d.test.ts` fails because `search.strategy='backtrack'` is not implemented, not because fixture generation or validation is broken.
 
