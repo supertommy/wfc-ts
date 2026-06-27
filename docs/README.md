@@ -5,8 +5,9 @@ This guide explains Wave Function Collapse and walks through the optimization te
 ## Contents
 
 1. [WFC Concepts](./wfc-concepts.md) — What WFC is and how it works
-2. [Architecture](./architecture.md) — Code structure and data layout
-3. [Optimization History](./optimization-history.md) — The ratchet journey from 1x to 20x
+2. [3D WFC](./3d-wfc.md) — Voxel grids, six-direction rules, validation, and visualization
+3. [Architecture](./architecture.md) — Code structure and data layout
+4. [Optimization History](./optimization-history.md) — The ratchet journey from 1x to 20x
 
 ## Quick Overview
 
