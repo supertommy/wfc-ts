@@ -118,9 +118,14 @@ describe("rich 3D pipe sockets", () => {
 
     expect(names).toContain("empty");
     expect(names.some((n) => n.startsWith("straight-"))).toBe(true);
-    expect(names.some((n) => n.includes("elbow-"))).toBe(true);
-    expect(names.some((n) => n.includes("tee-"))).toBe(true);
-    expect(names.some((n) => n.includes("junction-6"))).toBe(true);
+
+    // explicit "at least one" for the required rich pipe categories per Phase 3 Sprint 0 harness
+    const elbows = names.filter((n) => n.includes("elbow-"));
+    const tees = names.filter((n) => n.includes("tee-"));
+    const sixways = names.filter((n) => n.includes("junction-6"));
+    expect(elbows.length).toBeGreaterThanOrEqual(1);
+    expect(tees.length).toBeGreaterThanOrEqual(1);
+    expect(sixways.length).toBeGreaterThanOrEqual(1);
   });
 
   it("socket-generated rules are symmetric (A allows B on D iff B allows A on OPP[D])", () => {

@@ -21,14 +21,17 @@ hybrid: unit tests for sockets, API smoke for solve success, and browser verific
 
 ## Sprints
 
-### Sprint 0: Verification Harness
+### Sprint 0: Verification Harness — **SHIPPED**
+> **Built:** Extended rich socket structural assertions and added an API smoke script that is red on the current straights-only server.
+
 **Goal:** Add tests and browser smoke expectations before visualizer implementation.
 **Executor:** Test-writing sub-agent with context isolation.
 
-- [ ] Task 0.1: Extend `test/pipe-sockets-3d.test.ts` to assert the rich pipe tileset includes at least one elbow, one tee, and one six-way junction.
-- [ ] Task 0.2: Add a socket validation test that every generated adjacency rule is symmetric: if tile A allows tile B on direction D, tile B allows tile A on `OPP[D]`.
-- [ ] Task 0.3: Add an API smoke script or test that requests `/api/solve-3d-instant?width=6&height=6&depth=6&seed=42` and expects `ok: true` with rich pipes once Phase 3 lands.
-- [ ] Task 0.4: Confirm tests fail before the visualizer rich tileset is implemented.
+- [x] Task 0.1: Extend `test/pipe-sockets-3d.test.ts` to assert the rich pipe tileset includes at least one elbow, one tee, and one six-way junction.
+- [x] Task 0.2: Add a socket validation test that every generated adjacency rule is symmetric: if tile A allows tile B on direction D, tile B allows tile A on `OPP[D]`.
+- [x] Task 0.3: Add an API smoke script or test that requests `/api/solve-3d-instant?width=6&height=6&depth=6&seed=42` and expects `ok: true` with rich pipes once Phase 3 lands.
+- [x] Task 0.4: Confirm tests fail before the visualizer rich tileset is implemented.
+  - Red signal: `test/smoke-solve-3d-instant-rich.ts` reports only `empty`, `pipe-X`, `pipe-Y`, and `pipe-Z` are registered, pinpointing missing rich pipes.
 **Verification:** Red tests identify missing rich pipes, not unrelated solver failures.
 
 ### Sprint 1: Rich socket tileset in server
