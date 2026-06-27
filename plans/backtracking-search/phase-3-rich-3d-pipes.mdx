@@ -65,12 +65,14 @@ search: { strategy: 'backtrack', maxBacktracks: 4096, maxDepth: 256 },
 
 **Demo:** `curl -s "http://localhost:3457/api/tilesets" | jq '.Pipes.tiles | length'` shows more than 4 tiles.
 
-### Sprint 2: Socket-driven pipe geometry
-- [ ] Task 2.1: In `viz3d/index.html`, replace tile-index-specific geometry creation with socket-driven segment meshes `(2pt)`.
+### Sprint 2: Socket-driven pipe geometry — **SHIPPED**
+> **Built:** Replaced tile-index-specific X/Y/Z meshes with socket-derived hub-and-arm geometries while preserving legend, z-slice, bounding box, and auto-rotate controls.
+
+- [x] Task 2.1: In `viz3d/index.html`, replace tile-index-specific geometry creation with socket-driven segment meshes `(2pt)`.
   - For each pipe tile, render one small hub sphere at cell center and one half-cylinder for each open face in `sockets[t]`.
   - Adjacent matching openings produce two half-cylinders that meet at the cell boundary, forming a continuous tube.
   - Keep empty as faint wireframe or invisible depending on the current UI toggle.
-- [ ] Task 2.2: Preserve the current auto-rotate, bounding box, z-slice, and legend behavior `(1pt)`.
+- [x] Task 2.2: Preserve the current auto-rotate, bounding box, z-slice, and legend behavior `(1pt)`.
   - DO NOT regress controls added during Phase 2 visualizer polish.
 **Demo:** Browser at `http://localhost:3457/` shows elbows and tees, not just red/green/blue rails.
 
