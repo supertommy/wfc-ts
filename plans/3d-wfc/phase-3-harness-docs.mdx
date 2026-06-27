@@ -235,10 +235,12 @@ bun test ./test/learning-guide-check.ts
 # For browser review, run the existing make-pages-interactive workflow for docs/learning/.
 ```
 
-### Sprint 3: Final Verification
+### Sprint 3: Final Verification — **SHIPPED**
+> **Built:** Final gates passed: typecheck, full test suite, 2D proof harness, 3D proof harness, and direct 3D validator smoke.
+
 **Goal:** Run all gates and commit.
 
-- [ ] Task 3.1: Run full test suite `(0pt)`
+- [x] Task 3.1: Run full test suite `(0pt)`
   ```bash
   bun run typecheck
   bun test
@@ -246,14 +248,14 @@ bun test ./test/learning-guide-check.ts
   bun run harness/prove-harness-3d.ts
   ```
 
-- [ ] Task 3.2: Test 3D validator on actual solve `(0pt)`
+- [x] Task 3.2: Test 3D validator on actual solve `(0pt)`
   ```bash
   bun run harness/validate-3d.ts
   bun run harness/prove-harness-3d.ts
   # Expected: FINAL 3D HARNESS PASS
   ```
 
-- [ ] Task 3.3: Commit with message "docs: add 3D documentation and learning guide" `(0pt)`
+- [x] Task 3.3: Commit with message "docs: add 3D documentation and learning guide" `(0pt)`
 
 **Demo:** All tests pass, 3D validator works, docs are readable.
 
