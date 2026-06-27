@@ -139,14 +139,23 @@
       { axis: 'z', sign: -1 }, { axis: 'z', sign: 1 },
     ];
 
+    // Geometry lives inside a 1×1×1 voxel centered on the cell.
+    // Each socket arm reaches exactly from the cell center to the cell face.
+    // Adjacent cells share that face, so matching sockets meet at a 1-unit
+    // center-to-center distance without gaps or overlap.
+    const PIPE_RADIUS = 0.18;
+    const PIPE_ARM_LENGTH = 0.5;
+    const PIPE_ARM_OFFSET = PIPE_ARM_LENGTH / 2;
+    const PIPE_HUB_RADIUS = 0.26;
+
     // CylinderGeometry defaults to Y axis. Build one center-to-face tube arm.
     function makeSocketSegmentGeometry(dir) {
       const { axis, sign } = SOCKET_DIRS[dir];
-      const geo = new THREE.CylinderGeometry(0.22, 0.22, 0.62, 16);
+      const geo = new THREE.CylinderGeometry(PIPE_RADIUS, PIPE_RADIUS, PIPE_ARM_LENGTH, 16);
       if (axis === 'x') geo.rotateZ(Math.PI / 2);      // Y -> X
       else if (axis === 'z') geo.rotateX(Math.PI / 2);  // Y -> Z
 
-      const offset = 0.31 * sign;
+      const offset = PIPE_ARM_OFFSET * sign;
       if (axis === 'x') geo.translate(offset, 0, 0);
       else if (axis === 'y') geo.translate(0, offset, 0);
       else geo.translate(0, 0, offset);
@@ -162,7 +171,7 @@
         return new THREE.BoxGeometry(0.98, 0.98, 0.98);
       }
 
-      const parts = [new THREE.SphereGeometry(0.3, 16, 12)];
+      const parts = [new THREE.SphereGeometry(PIPE_HUB_RADIUS, 16, 12)];
       for (const dir of openDirs) parts.push(makeSocketSegmentGeometry(dir));
       const merged = mergeGeometries(parts, false);
       for (const part of parts) part.dispose();
