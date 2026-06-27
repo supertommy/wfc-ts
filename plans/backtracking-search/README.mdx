@@ -1,0 +1,175 @@
+# Backtracking Search Implementation Plan
+
+## Overview
+
+Add opt-in decision-stack backtracking to the shared `WFCEngine` so `WFCSolver` and `WFCSolver3D` can solve harder constraint sets without throwing away the whole attempt on the first contradiction. The immediate user-facing payoff is a rich 3D pipe visualizer with elbows, turns, and branches; the library payoff is that 2D hard tilesets can opt into stronger search too.
+
+The current restart-only path stays the default until benchmarks prove a better default. That preserves the published 2D speed/success profile from the ratchet loop while letting rich 3D cases use the heavier solver mode deliberately.
+
+## Implementation Summary
+
+**What we're building**
+- An additive `SearchOptions` API that lets callers choose `strategy: 'restart' | 'backtrack'` at construction time.
+- Snapshot-backed decision-stack backtracking inside `src/engine.ts`, enabled only for `strategy: 'backtrack'`.
+- A rich 3D socket-pipe tileset in `viz3d/server.ts` with straights, elbows, tees, and junctions.
+- Socket-driven pipe rendering in `viz3d/index.html` so a tile with openings on X then Y visibly turns from X to Y.
+<Change id="ch-ratchet-wording">
+
+- A performance ratchet that benchmarks default 2D restart behavior to keep it fast, then uses the ratchet loop to optimize opt-in backtracking after correctness lands.
+
+</Change>
+- A final interactive learning guide that explains restarts, propagation, decision checkpoints, rollback, and why rich 3D sockets need search.
+
+**How we're building it**
+- Keep `run(seed, limit, restartBudget)` and `stepRun(...)` signatures unchanged; `restartBudget` remains the outer restart budget.
+- Add `search?: SearchOptions` to `WFCSolverOptions` and `WFCSolver3DOptions`; wrappers pass it to `WFCEngine`.
+- Default `search` is `{ strategy: 'restart' }`, so existing callers and existing speed claims are protected.
+- In backtrack mode, before each observation, save a checkpoint of the live typed-array state plus an ordered list of remaining candidate tiles for that cell.
+- On contradiction, restore the last checkpoint, ban the failed choice from that checkpoint's candidate list, and try the next candidate. If all checkpoint candidates are exhausted, pop again. If the root is exhausted, use the next outer restart seed.
+- Rebuild MRV/entropy selection structures on checkpoint restore instead of snapshotting heap internals; this is slower but simpler and correct for the first implementation.
+- Optimize only after correctness: benchmark full-snapshot backtracking, then tighten with depth bounds, allocation reuse, or a trail/hybrid only if the ratchet says it is needed.
+
+**Architecture & integration**
+- Search policy lives in `src/engine.ts:342` and `src/engine.ts:386`, where `run` and `stepRun` currently restart after contradiction.
+- Mutation lives in `src/engine.ts:526`, `src/engine.ts:566`, and `src/engine.ts:601`; backtracking must restore state mutated by `observe`, `propagate`, and `ban`.
+- Existing H10 fixpoint snapshots at `src/engine.ts:108` and `src/engine.ts:256` are reused as the model for checkpoint restore, but not confused with per-decision checkpoints.
+- 2D and 3D wrappers are thin delegates (`src/solver.ts:39`, `src/solver-3d.ts:42`), so adding search to the engine benefits both solvers.
+- The current 3D visualizer's straights-only workaround lives at `viz3d/server.ts:40`; the rich tileset replaces that once backtracking exists.
+
+**New artifacts**
+- `test/backtracking.test.ts` — focused engine-level and wrapper-level tests for opt-in backtracking.
+- `test/pipe-sockets-3d.test.ts` — validates rich 3D socket rules and post-solve opening matches.
+- `performance-test/backtracking-ratchet.ts` — compares default restart, opt-in backtrack, and rich pipe solve rates.
+- `docs/learning/backtracking-wfc.mdx` — final interactive learning guide.
+- `docs/learning/components/BacktrackingTrace.tsx` — guide widget that steps through observe, propagate, contradiction, checkpoint restore, and retry.
+
+**Reused without modification**
+- `src/prng.ts` — deterministic seeded random source.
+- `src/topology.ts` — direction/neighbour abstraction for 2D and 3D.
+- `src/bucket-pq.ts` and `src/entropy-heap.ts` — selection structures; backtracking rebuilds them from restored `sumsOfOnes` instead of inventing a parallel heap.
+- `viz3d/server.ts:54` socket-rule generation pattern — generate adjacency from face openings instead of hand-authoring every pair.
+
+**Modified existing code**
+- `src/types.ts:9` — add `SearchStrategy`, `SearchOptions`, optional `StepStatus.backtracks`, and optional `search` fields on solver options.
+- `src/index.ts:13` — export `SearchStrategy` and `SearchOptions` from the package root. *(Discovery correction: the original plan missed this public API barrel.)*
+- `src/engine.ts:126` — accept `search?: SearchOptions`; default to restart-only.
+- `src/engine.ts:342` and `src/engine.ts:386` — branch to backtracking-aware search loops only when opted in.
+- `src/engine.ts:526` — split tile-choice calculation from destructive observation so backtracking can save candidate order before banning.
+- `src/engine.ts:677` — include checkpoint buffers in `footprintBytes()`.
+- `src/solver.ts:39` and `src/solver-3d.ts:42` — destructure and pass `search` to `WFCEngine`.
+- `viz3d/server.ts:40` — replace straights-only pipes with rich socket tiles and instantiate `WFCSolver3D` with `search: { strategy: 'backtrack', maxBacktracks: 4096, maxDepth: 256 }`.
+- `viz3d/index.html` — render arbitrary socket openings from `sockets[t]`, not tile-index-specific X/Y/Z assumptions.
+- `README.md` and `viz3d/README.md` — document opt-in search and rich pipe mode.
+
+**Verification approach**
+- Hybrid: unit tests for search mechanics, fixture tests for hard 2D/3D solvability, script-based ratchets for success/speed, browser verification for the 3D visualizer, and type/build checks.
+- Required commands: `bun run typecheck`, `bun test`, `bun run harness/prove-harness.ts`, `bun run performance-test/backtracking-ratchet.ts`, and a Chrome smoke test against `http://localhost:3457/`.
+- Success means existing default restart behavior stays green and fast, opt-in backtracking solves the rich 3D pipe fixture, and browser output shows pipes that turn and branch.
+
+**Edge cases handled**
+- Existing callers omit `search` and get identical restart-only behavior.
+- `restartBudget=0` still means one outer attempt.
+- Backtracking exhaustion falls back to the next outer restart, then returns `false` if both budgets exhaust.
+- MRV, entropy, and scanline all restore consistent selection state; scanline also restores `observedSoFar`.
+- `getWave()` remains valid during `stepRun`; partial visualizations may become less resolved after a backtrack, and `StepStatus.backtracks` makes that explainable.
+- Large 3D cases use bounded `maxDepth` and `maxBacktracks` to prevent unbounded memory/time.
+- Entropy mode restores `sumsOfWeights`, `sumsOfWeightLogWeights`, and `entropies` to avoid `NaN` priorities.
+
+**Notable trade-offs or risks**
+- Full typed-array snapshots are intentionally chosen for the first implementation because they are correct and reviewable. They are slower than a delta trail, but only in opt-in backtracking mode.
+- Backtracking can improve 2D success for hard tilesets, but it is not automatically faster; default 2D speed is preserved by keeping restart-only as the default.
+- Rich socket pipes prove local opening matches, not global single-component connectivity. A global connectivity constraint is considered and cut from this plan.
+
+## Research Context
+
+### Patterns We're Following
+- `src/engine.ts:342` and `src/engine.ts:386` show the current restart-only search loop. Contradiction currently aborts the attempt and derives a new seed.
+- `src/engine.ts:256` shows the H10 fixpoint restore model: `wave.set(...)`, `compatible.set(...)`, `sumsOfOnes.set(...)`, heap rebuild. Per-decision checkpoints follow this shape.
+- `src/engine.ts:526` computes LCV `(1 + freedom)^3`; backtracking preserves that first-choice ordering instead of replacing the heuristic.
+- `src/engine.ts:601` is the sole `ban` mutator; backtracking restores around it rather than trying to partially unban support counts in v1.
+- `viz3d/server.ts:54` already generates rules from 6-face sockets; rich pipes extend this mechanism.
+
+### Architecture Decisions
+- **Opt-in first**: `search: { strategy: 'backtrack' }` is additive and protects current 2D default speed.
+- **Snapshot first, trail later**: snapshot restore is simpler and correct; optimization happens after backtracking correctness is proven.
+- **Engine-only search logic**: wrappers only pass options through, keeping 2D/3D parity.
+- **Heap rebuild on restore**: slower than heap snapshots, but avoids corrupting `BucketPQ` or `EntropyHeap` internals.
+- **Rich pipes in visualizer first**: proves the feature in a human-readable surface before proposing built-in tileset helpers.
+
+### Decisions from User Clarification
+- The user wants the rich pipe visualizer to show true 3D routes: go up, turn left, branch backward, etc.
+- The user expects the 2D and 3D solver to share algorithmic improvements because they now share `WFCEngine`.
+- The user is comfortable with correctness first and speed ratcheting after backtracking works.
+
+## Skills to Reference
+- `testing-gotchas` — structural assertions, noise-aware perf thresholds, and proof that instrumentation is exercised.
+- `game-dev-gotchas` — deterministic discrete decisions, RNG-order fidelity, zero-allocation hot paths, and ratchet discipline.
+- `software-design-patterns` — Command/undo and state-machine framing for decision checkpoints.
+- `data-parsing-gotchas` — asymmetric socket-bit tests and safe serialization of typed arrays/bit matrices.
+- `threejs-gotchas` — InstancedMesh/material/rendering correctness for the pipe visualizer.
+- `lets-build-verify` — optional formal verification of the backtracking state machine if implementation findings get subtle.
+- `make-pages-interactive` — final learning guide and live plan review surface.
+
+## Knowledge to Reference
+- `qmd://tommyato-knowledge/investigations/gpu-frontier-data-structures-for-wfc.md` — WFC propagation is a worklist/frontier; determinism and invariant checks matter more than raw speed during solver changes.
+- `qmd://tommyato-knowledge/references/books/oceanofpdf-com-introductory-tiling-theory-for-computer-graphics-craig-kaplan/full-text/02-3-2-symmetrygroups.md` — Wang/matching conditions model sockets; sufficiently general matching-rule patch builders need backtracking.
+- `qmd://tommyato-knowledge/references/books/algorithms-in-a-nutshell/distilled/07-path-finding-in-ai.md` — DFS/backtracking pattern: store decisions, undo state, try alternatives.
+- `qmd://tommyato-knowledge/references/books/oceanofpdf-com-the-effective-engineer-edmond-lau/distilled/05-measure-what-you-want-to-improve.md` — performance ratcheting: correctness first, then guard speed/success metrics with measured thresholds.
+
+## Sprint Preference
+
+continue-until-blocked — the work has clear verification gates and should progress sprint by sprint until a gate fails or implementation contradicts the plan.
+
+## Verification Strategy
+
+hybrid — unit tests prove solver mechanics, script ratchets measure speed/success, browser smoke tests prove the 3D pipe UX, and build/typecheck protect the public package surface.
+
+## Phases
+
+Each phase totals ≤ 8 story points and leaves the app runnable.
+
+| # | Phase | Points | File | Description |
+|---|-------|--------|------|-------------|
+| 1 | Search API and Red Tests | 7 | [phase-1-search-api-tests.html](./phase-1-search-api-tests.html) | Add the opt-in API shape and failing tests/fixtures before changing engine behavior. |
+| 2 | Snapshot Backtracking Core | 8 | [phase-2-snapshot-backtracking-core.html](./phase-2-snapshot-backtracking-core.html) | Implement bounded checkpoint backtracking in `WFCEngine` while default restart stays untouched. |
+| 3 | Rich 3D Pipe Network Visualizer | 7 | [phase-3-rich-3d-pipes.html](./phase-3-rich-3d-pipes.html) | Replace the straights-only demo with elbow/tee/junction sockets and socket-driven rendering. |
+| 4 | Performance Ratchet and Learning Guide | 8 | [phase-4-performance-docs-learning.html](./phase-4-performance-docs-learning.html) | Measure, optimize only where data demands it, document public behavior, and ship the interactive guide. |
+
+## Files to Create/Modify
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `src/types.ts` | Modify | Add `SearchStrategy`, `SearchOptions`, optional solver options, optional `StepStatus.backtracks`. |
+| `src/index.ts` | Modify | Export `SearchStrategy` and `SearchOptions` from the package root. *(Discovery correction.)* |
+| `src/engine.ts` | Modify | Add opt-in checkpoint backtracking and preserve restart-only default. |
+| `src/solver.ts` | Modify | Pass `search` into `WFCEngine` for 2D. |
+| `src/solver-3d.ts` | Modify | Pass `search` into `WFCEngine` for 3D. |
+| `test/backtracking.test.ts` | Create | Red tests and final tests for opt-in backtracking semantics. |
+| `test/pipe-sockets-3d.test.ts` | Create | Rich socket tileset validation and solve tests. |
+| `performance-test/backtracking-ratchet.ts` | Create | Speed/success comparison for default restart vs opt-in backtrack. |
+| `viz3d/server.ts` | Modify | Rich socket tileset and backtracking-enabled solver construction. |
+| `viz3d/index.html` | Modify | Render arbitrary socket openings and rich junction geometry. |
+| `README.md` | Modify | Document opt-in search and default-performance posture. |
+| `viz3d/README.md` | Modify | Explain rich pipe visualizer controls and constraints. |
+| `docs/learning/backtracking-wfc.mdx` | Create | Interactive learning guide authored last. |
+| `docs/learning/components/BacktrackingTrace.tsx` | Create | Hydrated widget for the learning guide. |
+| `docs/learning/index.mdx` | Create/Modify | Register the guide. |
+
+## Implementation Notes
+
+### Utilities to Reuse
+- `mulberry32` from `src/prng.ts` for deterministic attempt seeds.
+- Existing `weightedPick` at `src/engine.ts:33`; do not introduce a second random picker.
+- Existing H10 snapshot/restore pattern at `src/engine.ts:256`; checkpoint restore should mirror this and then rebuild selection state.
+- Existing socket-rule generator shape at `viz3d/server.ts:54`.
+
+### Patterns to Follow
+- Preserve wrappers as thin delegates like `src/solver.ts:129` and `src/solver-3d.ts:135`.
+- Keep all typed-array state preallocated when possible; allocation in opt-in backtracking checkpoints is allowed in Phase 2 but must be measured in Phase 4.
+- Treat agent output as leads; re-read exact files before modifying.
+
+### Pitfalls to Avoid
+- **DO NOT enable backtracking by default in Phase 2** — it would put the 2D speed claim at risk before the ratchet measures it.
+- **DO NOT add a tabu penalty heuristic** — history shows naive tabu/backtracking was reverted, and it does not restore state correctly.
+- **DO NOT partially unban AC-4 support counts in the first implementation** — use snapshot restore first; partial support-count undo is the optimization, not the correctness baseline.
+- **DO NOT claim rich pipes are globally one connected component** — local sockets guarantee openings match, not whole-network connectivity.

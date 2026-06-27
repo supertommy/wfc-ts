@@ -1,0 +1,97 @@
+# Phase 1: Search API and Red Tests
+
+> Part of [Backtracking Search](./README.html) · **7 story points** (≤ 8)
+
+## Goal
+
+Add the public opt-in search API and the failing verification harness before engine behavior changes. After this phase, the package still uses restart-only search by default, all existing tests pass, and new backtracking tests are present and intentionally fail where implementation is missing.
+
+## Skills to Reference
+- `testing-gotchas` — use structural tests for API shape and behavior, not noisy runtime thresholds.
+- `game-dev-gotchas` — preserve deterministic RNG draw order in tests.
+- `data-parsing-gotchas` — use asymmetric socket fixtures so direction/order bugs cannot pass accidentally.
+
+## Knowledge to Reference
+- `qmd://tommyato-knowledge/references/books/algorithms-in-a-nutshell/distilled/07-path-finding-in-ai.md` — backtracking stores a decision and tries alternatives.
+- `qmd://tommyato-knowledge/references/books/oceanofpdf-com-introductory-tiling-theory-for-computer-graphics-craig-kaplan/full-text/02-3-2-symmetrygroups.md` — matching face labels/sockets are the right model for rich pipe tiles.
+
+## Verification Strategy
+
+unit-tests + build-type-check. This phase defines the surface and red tests without changing solver behavior.
+
+## Sprints
+
+### Sprint 0: Verification Harness — **SHIPPED**
+> **Built:** Added red tests for opt-in backtracking behavior, `StepStatus.backtracks`, and rich 3D socket validation; corrected the discovered public API barrel gap in the plan.
+
+**Goal:** Create verification infrastructure BEFORE implementation.
+**Executor:** Test-writing sub-agent with context isolation: requirements, public API shape, and file list only.
+
+- [x] Task 0.1: Create `test/backtracking.test.ts` with failing tests for opt-in backtracking solving a fixture that restart-only with `restartBudget=0` fails.
+- [x] Task 0.2: Create `test/pipe-sockets-3d.test.ts` with a rich 3D socket fixture generator and a post-solve opening-match validator.
+- [x] Task 0.3: Run `bun test test/backtracking.test.ts test/pipe-sockets-3d.test.ts` and confirm the new tests fail because `search` is not implemented yet.
+  - Red signal: `7 pass / 3 fail`; failures are missing opt-in backtracking behavior and missing `StepStatus.backtracks`.
+- [x] Task 0.4: Commit verification artifacts with the failing tests.
+**Verification:** New tests exist and fail for missing backtracking API/behavior. Existing tests are not edited.
+
+### Sprint 1: Add additive search types
+- [ ] Task 1.0: Apply approved discovery correction by exporting `SearchStrategy` and `SearchOptions` from `src/index.ts` `(0pt)`.
+  - The original plan missed the package-root public API barrel.
+- [ ] Task 1.1: Modify `src/types.ts` to add these exported types after `Heuristic` `(1pt)`:
+
+```ts
+export type SearchStrategy = 'restart' | 'backtrack';
+
+export interface SearchOptions {
+  /** Default: 'restart'. 'backtrack' enables bounded decision-stack search inside each restart attempt. */
+  strategy?: SearchStrategy;
+  /** Maximum checkpoint restores per outer restart attempt. Default: 4096 when strategy='backtrack'. */
+  maxBacktracks?: number;
+  /** Maximum decision checkpoints retained at once. Default: 256 when strategy='backtrack'. */
+  maxDepth?: number;
+}
+```
+
+  - DO NOT remove or rename `Heuristic`; existing imports must keep compiling.
+- [ ] Task 1.2: Add optional `search?: SearchOptions;` to both `WFCSolverOptions` and `WFCSolver3DOptions` in `src/types.ts` `(1pt)`.
+  - Exact placement: after `heuristic?: Heuristic;` in each interface.
+  - DO NOT make `search` required.
+- [ ] Task 1.3: Add optional `backtracks?: number;` to `StepStatus` in `src/types.ts` `(1pt)`.
+  - Existing consumers ignore unknown optional fields.
+**Demo:** `bun run typecheck` prints the `tsc --noEmit` command with no errors.
+
+### Sprint 2: Thread options without changing behavior
+- [ ] Task 2.1: Modify `src/solver.ts` constructor destructuring at `src/solver.ts:40` to include `search` and pass it as the final argument to `new WFCEngine(...)` `(1pt)`.
+
+```ts
+const { width, height, periodic, weights, rules, heuristic = 'mrv', search } = opts;
+this.engine = new WFCEngine(topology, weightArr, propStart, propLen, propData, heuristic, search);
+```
+
+- [ ] Task 2.2: Modify `src/solver-3d.ts` constructor destructuring at `src/solver-3d.ts:43` the same way `(1pt)`.
+- [ ] Task 2.3: Modify `src/engine.ts` constructor signature at `src/engine.ts:126` to accept `search: SearchOptions = { strategy: 'restart' }` but do not use it yet `(1pt)`.
+  - Add `SearchOptions` to the type import at `src/engine.ts:11`.
+  - Store a private readonly normalized config:
+
+```ts
+private readonly searchStrategy: SearchStrategy;
+private readonly maxBacktracks: number;
+private readonly maxBacktrackDepth: number;
+```
+
+  - Normalize defaults to restart-only unless `search.strategy === 'backtrack'`.
+**Demo:** `bun run typecheck && bun test` passes all pre-existing tests; the new red tests still fail only on missing behavior.
+
+### Sprint 3: Add rich socket fixtures for tests only
+- [ ] Task 3.1: In `test/pipe-sockets-3d.test.ts`, implement local test helper `buildRichPipeTiles()` that returns empty, straights, elbows, tees, and six-way junction sockets `(1pt)`.
+  - Use direction order `0=left, 1=right, 2=up, 3=down, 4=front, 5=back`.
+  - Use `OPP = [1, 0, 3, 2, 5, 4]`.
+- [ ] Task 3.2: Add `assertOpeningsMatch(result, sockets, width, height, depth)` that checks every interior opening meets an opening on the neighbor's opposite face `(1pt)`.
+  - DO NOT treat boundary openings as violations in non-periodic mode; the topology skips out-of-bounds neighbors.
+**Demo:** `bun test test/pipe-sockets-3d.test.ts` fails because `search.strategy='backtrack'` is not implemented, not because fixture generation or validation is broken.
+
+## Phase Verification
+
+- `bun run typecheck` succeeds.
+- `bun test` succeeds except the intentionally red backtracking tests if they are run before Phase 2 implementation.
+- `git diff -- src/types.ts src/solver.ts src/solver-3d.ts src/engine.ts` shows only additive API threading and no behavior branch that turns on backtracking by default.

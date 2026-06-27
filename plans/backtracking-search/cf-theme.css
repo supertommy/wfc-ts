@@ -1,0 +1,13 @@
+:root{
+  --cf-accent:#2563eb;
+  --cf-accent-2:#7c3aed;
+  --cf-link:#0891b2;
+  --cf-font-heading:ui-sans-serif,system-ui,sans-serif;
+  --cf-font-body:ui-sans-serif,system-ui,sans-serif;
+  --cf-font-mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+  --cf-page-bg:#f8fafc;
+  --cf-page-fg:#172033;
+  --cf-radius:0.9rem;
+  --cf-measure:58rem;
+}
+@media (prefers-color-scheme:dark){:root{ --cf-page-bg:#070b14; --cf-page-fg:#dbeafe; }}
