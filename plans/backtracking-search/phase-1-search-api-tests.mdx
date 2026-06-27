@@ -62,16 +62,18 @@ export interface SearchOptions {
   - Existing consumers ignore unknown optional fields.
 **Demo:** `bun run typecheck` prints the `tsc --noEmit` command with no errors.
 
-### Sprint 2: Thread options without changing behavior
-- [ ] Task 2.1: Modify `src/solver.ts` constructor destructuring at `src/solver.ts:40` to include `search` and pass it as the final argument to `new WFCEngine(...)` `(1pt)`.
+### Sprint 2: Thread options without changing behavior — **SHIPPED**
+> **Built:** Threaded `search` through both solver wrappers and normalized it inside `WFCEngine` without changing restart-only control flow.
+
+- [x] Task 2.1: Modify `src/solver.ts` constructor destructuring at `src/solver.ts:40` to include `search` and pass it as the final argument to `new WFCEngine(...)` `(1pt)`.
 
 ```ts
 const { width, height, periodic, weights, rules, heuristic = 'mrv', search } = opts;
 this.engine = new WFCEngine(topology, weightArr, propStart, propLen, propData, heuristic, search);
 ```
 
-- [ ] Task 2.2: Modify `src/solver-3d.ts` constructor destructuring at `src/solver-3d.ts:43` the same way `(1pt)`.
-- [ ] Task 2.3: Modify `src/engine.ts` constructor signature at `src/engine.ts:126` to accept `search: SearchOptions = { strategy: 'restart' }` but do not use it yet `(1pt)`.
+- [x] Task 2.2: Modify `src/solver-3d.ts` constructor destructuring at `src/solver-3d.ts:43` the same way `(1pt)`.
+- [x] Task 2.3: Modify `src/engine.ts` constructor signature at `src/engine.ts:126` to accept `search: SearchOptions = { strategy: 'restart' }` but do not use it yet `(1pt)`.
   - Add `SearchOptions` to the type import at `src/engine.ts:11`.
   - Store a private readonly normalized config:
 

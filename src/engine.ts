@@ -8,7 +8,7 @@ import { mulberry32, type Random } from "./prng.js";
 import { EntropyHeap } from "./entropy-heap.js";
 import { BucketPQ } from "./bucket-pq.js";
 import type { Topology } from "./topology.js";
-import type { Heuristic, StepStatus } from "./types.js";
+import type { Heuristic, SearchOptions, SearchStrategy, StepStatus } from "./types.js";
 
 const HeuristicEnum = {
   mrv: 1,
@@ -62,6 +62,9 @@ export class WFCEngine {
   private readonly D: number;   // directionCount
   private readonly count: number;
   private readonly heuristic: number;
+  private readonly searchStrategy: SearchStrategy;
+  private readonly maxBacktracks: number;
+  private readonly maxBacktrackDepth: number;
 
   // Wave state
   private wave: Uint8Array;
@@ -129,7 +132,8 @@ export class WFCEngine {
     propStart: Uint16Array | Int32Array,
     propLen: Uint8Array | Uint16Array | Int32Array,
     propData: Uint8Array | Uint16Array | Int32Array,
-    heuristic: Heuristic = 'mrv'
+    heuristic: Heuristic = 'mrv',
+    search: SearchOptions = { strategy: 'restart' }
   ) {
     this.topology = topology;
     this.count = topology.cellCount;
@@ -137,6 +141,9 @@ export class WFCEngine {
     this.T = weights.length;
     this.TD = this.T * this.D;
     this.heuristic = HeuristicEnum[heuristic];
+    this.searchStrategy = search.strategy === 'backtrack' ? 'backtrack' : 'restart';
+    this.maxBacktracks = this.searchStrategy === 'backtrack' ? search.maxBacktracks ?? 4096 : 0;
+    this.maxBacktrackDepth = this.searchStrategy === 'backtrack' ? search.maxDepth ?? 256 : 0;
     this.weights = weights;
     this.propStart = propStart;
     this.propLen = propLen;

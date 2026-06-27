@@ -40,7 +40,7 @@ export class WFCSolver3D {
   private T: number;
 
   constructor(opts: WFCSolver3DOptions) {
-    const { width, height, depth, periodic, weights, rules, heuristic = 'mrv' } = opts;
+    const { width, height, depth, periodic, weights, rules, heuristic = 'mrv', search } = opts;
 
     this.MX = width;
     this.MY = height;
@@ -57,7 +57,7 @@ export class WFCSolver3D {
     const { propStart, propLen, propData } = this.buildPropagator(rules, this.T);
 
     // Create engine
-    this.engine = new WFCEngine(topology, weightArr, propStart, propLen, propData, heuristic);
+    this.engine = new WFCEngine(topology, weightArr, propStart, propLen, propData, heuristic, search);
   }
 
   /**
