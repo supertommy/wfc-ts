@@ -78,15 +78,17 @@ script-based ratchet + docs/browser review. The goal is to preserve default spee
   - Must explicitly say local sockets do not guarantee one global connected component.
 **Demo:** `grep -n "restart-only" README.md viz3d/README.md`, `grep -n "search: { strategy: 'backtrack' }" README.md viz3d/README.md`, and `bun test/docs-smoke.ts` pass.
 
-### Sprint 4: Interactive learning guide
-- [ ] Task 4.1: Create `docs/learning/backtracking-wfc.mdx` `(1pt)`.
+### Sprint 4: Interactive learning guide — **SHIPPED**
+> **Built:** Added `docs/learning/backtracking-wfc.mdx`, a hydrated `BacktrackingTrace` widget, and `docs/learning/index.mdx`. The guide follows the required anatomy and explains restart vs backtrack, decision checkpoints, propagation stack vs decision stack, and why rich pipes need alternatives.
+
+- [x] Task 4.1: Create `docs/learning/backtracking-wfc.mdx` `(1pt)`.
   - Follow the learning guide anatomy: hook, mental model, worked trace, interactive proof, retrieval close.
   - Explain: restart vs backtrack, decision checkpoint, propagation stack vs decision stack, and why rich pipes need alternatives.
-- [ ] Task 4.2: Create `docs/learning/components/BacktrackingTrace.tsx` `(1pt)`.
+- [x] Task 4.2: Create `docs/learning/components/BacktrackingTrace.tsx` `(1pt)`.
   - Widget must let the reader step through a tiny fixture: choose tile, propagate, hit contradiction, restore checkpoint, try next tile.
   - Use `useEffect` for browser-only work; no render-time `window` access.
-- [ ] Task 4.3: Create or update `docs/learning/index.mdx` with a row linking to the guide `(1pt)`.
-**Demo:** `bun ~/.navi/agent/skills/make-pages-interactive/build.ts docs/learning` succeeds.
+- [x] Task 4.3: Create or update `docs/learning/index.mdx` with a row linking to the guide `(1pt)`.
+**Demo:** `bun test/learning-guide-check.ts` runs `bun ~/.navi/agent/skills/make-pages-interactive/build.ts docs/learning` and succeeds.
 
 ## Phase Verification
 

@@ -1,0 +1,101 @@
+---
+title: Backtracking WFC
+summary: Learn how restart-only WFC differs from opt-in decision-stack backtracking.
+---
+
+import BacktrackingTrace from './components/BacktrackingTrace.tsx'
+
+# Backtracking WFC
+
+## Hook
+
+A normal WFC solver is brave and forgetful.
+
+It picks a tile. It propagates the consequences. If it finds a contradiction, it starts over. That is the restart-only default in `wfc-ts`, and it is still the fast path.
+
+Backtracking gives the solver a memory. It can say: "that choice was bad, go back one decision and try the next tile."
+
+That matters for rich pipes. A pipe can go straight, turn, climb, or branch. One early choice can look valid locally and still corner the network later.
+
+## Mental model
+
+There are two stacks. Keep them separate.
+
+| Stack | What it stores | When it changes |
+| --- | --- | --- |
+| Propagation stack | Cells whose neighbors need cleanup | Every time a tile is removed from a neighbor |
+| Decision stack | Checkpoints and untried tile alternatives | Only when the solver chooses a tile for an observed cell |
+
+The propagation stack is the janitor. It cleans up consequences.
+
+The decision stack is the time machine. It remembers where the solver can safely rewind.
+
+Restart-only WFC has the janitor but not the time machine. When the janitor finds a contradiction, the whole attempt is over.
+
+Backtracking keeps both. When propagation fails, the solver restores the newest decision checkpoint and tries the next alternative.
+
+## Worked trace
+
+Use a tiny 2 by 2 pipe board:
+
+```text
+A B
+C D
+```
+
+A chooses a corner. That corner forces B and C to keep matching openings. Later, D has no legal tile. The board is not impossible. The corner was just the wrong first choice.
+
+Restart-only search throws away the board and asks a new seed to try again.
+
+Backtracking restores the checkpoint before A, marks the failed corner as used, and tries A's next tile. The propagation stack then runs again from the restored state.
+
+The key detail: the solver restores more than the visible grid. It restores the wave, compatibility counts, entropy data, selection structure, PRNG state, and the remaining alternatives for that decision.
+
+That is why this feature is opt-in.
+
+## Interactive proof
+
+<BacktrackingTrace />
+
+## Why rich pipes need alternatives
+
+A straight-only pipe demo has few real choices. Empty, X, Y, and Z pipes either line up or they do not.
+
+Rich socket pipes add elbows, tees, and a six-way junction. More local options make better output, but they also create more ways to paint yourself into a corner.
+
+Backtracking helps because it does not panic at the first contradiction. It asks the closest useful question: "which recent decision still has another tile to try?"
+
+That is smaller than a restart and stronger than blind hope.
+
+## Using it
+
+The API is deliberately small:
+
+```typescript
+const solver = new WFCSolver({
+  width,
+  height,
+  periodic: true,
+  weights,
+  rules,
+  search: { strategy: 'backtrack' },
+});
+
+solver.run(42, -1, 0);
+```
+
+The default is still restart-only. Use that first. Opt into backtracking when a hard tileset needs alternatives more than it needs raw speed.
+
+`WFCSolver3D` accepts the same option.
+
+## Retrieval close
+
+Remember it like this:
+
+- Propagation stack: consequences.
+- Decision stack: alternatives.
+- Restart: throw away the whole attempt.
+- Backtrack: restore one checkpoint and try the next tile.
+- Rich pipes: more choices, more contradictions, more value from alternatives.
+
+If you can explain those five lines, you understand the feature.
