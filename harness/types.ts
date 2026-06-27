@@ -16,6 +16,19 @@ export interface InputSpec {
   limit: number;
 }
 
+/** A committed 3D benchmark input. 3D fixtures use JSON tile rules, not XML subsets. */
+export interface InputSpec3D {
+  name: string;
+  tileset: string;
+  width: number;
+  height: number;
+  depth: number;
+  periodic: boolean;
+  seed: number;
+  /** Max observe steps; -1 or omitted = run to completion. */
+  limit?: number;
+}
+
 /** The outcome of one solver run. */
 export interface RunResult {
   spec: InputSpec;

@@ -31,7 +31,7 @@ hybrid (script-based validation + browser verification for learning guide)
   - Use independent direction tables matching `WFCSolver3D`: left/right/up/down/front/back = -X/+X/+Y/-Y/-Z/+Z.
   - Include a small `import.meta.main` smoke that solves a 4×4×4 all-compatible grid and prints a parseable valid/violation line.
 
-- [ ] Task 0.2: Add 3D input specs to harness `(1pt)`
+- [x] Task 0.2: Add 3D input specs to harness `(1pt)`
   - Modify `harness/types.ts` to add `InputSpec3D` with `width`, `height`, `depth`, `tileset`, `periodic`, `seed`, and optional `limit`.
   - Reuse the existing `performance-test/inputs-3d/pipes-4.json`; normalize it only if needed for the new type. Do not recreate it.
 

@@ -152,13 +152,14 @@ export function validate3D(
     }
   }
 
-  return {
+  const report: ValidationResult3D = {
     valid: violations === 0 && (!complete || unresolvedCells === 0),
     violations,
     adjacencyChecks,
     unresolvedCells,
-    firstViolation,
   };
+  if (firstViolation) report.firstViolation = firstViolation;
+  return report;
 }
 
 if (import.meta.main) {
