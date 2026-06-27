@@ -48,6 +48,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "bench": "bun run performance-test/measure.ts",
+    "ratchet:backtracking": "bun run performance-test/backtracking-ratchet.ts",
     "prove": "bun run harness/prove-harness.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",

@@ -34,24 +34,28 @@ script-based ratchet + docs/browser review. The goal is to preserve default spee
 - [x] Task 0.4: Confirm the ratchet script runs and prints diagnostics before thresholds are enforced.
 **Verification:** `bun run performance-test/backtracking-ratchet.ts`, `bun test/docs-smoke.ts`, and `bun test/learning-guide-check.ts` all exit 0; docs/guide checks are diagnostic until their content lands.
 
-### Sprint 1: Ratchet default restart speed and opt-in cost
-- [ ] Task 1.1: Implement `performance-test/backtracking-ratchet.ts` `(2pt)`.
+### Sprint 1: Ratchet default restart speed and opt-in cost — **SHIPPED**
+> **Built:** Reworked the ratchet into JSON-line samples for the Summer helper fixture, 2D `WFCSolver` default restart, 2D opt-in backtracking, and rich 3D pipe `6^3`/`8^3`. Added `ratchet:backtracking` and thresholded p95 checks only after a 20-sample measurement run.
+>
+> **Measured p95 → threshold:** Summer 16 default `1.307ms → 5ms`; 2D rich default `0.212ms → 1ms`; 2D rich backtrack `0.071ms → 0.5ms`; 3D rich 6³ `4.481ms → 15ms`; 3D rich 8³ `11.069ms → 35ms`.
+
+- [x] Task 1.1: Implement `performance-test/backtracking-ratchet.ts` `(2pt)`.
   - Include these scenarios:
     - existing default 2D Summer or closest existing hard input via current harness fixtures;
     - `WFCSolver` with omitted `search`;
     - `WFCSolver` with `search: { strategy: 'backtrack' }` on a hard 2D fixture;
     - `WFCSolver3D` rich pipe `6^3` and `8^3`.
   - Print JSON lines with `scenario`, `ok`, `elapsedMs`, `attempts`, `backtracks`, `cells`, and `seed`.
-- [ ] Task 1.2: Establish ratchet thresholds only after measuring 20 repeated runs `(1pt)`.
+- [x] Task 1.2: Establish ratchet thresholds only after measuring 20 repeated runs `(1pt)`.
   - DO NOT guess a millisecond threshold before measuring noise.
   - Use `testing-gotchas` guidance: thresholds must be separated from noise by at least 2×.
-- [ ] Task 1.3: Add a package script if useful `(1pt)`:
+- [x] Task 1.3: Add a package script if useful `(1pt)`:
 
 ```json
 "ratchet:backtracking": "bun run performance-test/backtracking-ratchet.ts"
 ```
 
-**Demo:** `bun run performance-test/backtracking-ratchet.ts` prints all scenarios and exits 0.
+**Demo:** `bun run ratchet:backtracking` prints all scenarios and exits 0.
 
 ### Sprint 2: Optimize measured bottlenecks only
 - [ ] Task 2.1: If full snapshots exceed the accepted opt-in budget, preallocate checkpoint buffers up to `maxDepth` instead of allocating arrays on every checkpoint `(2pt)`.
