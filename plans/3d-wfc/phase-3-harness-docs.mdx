@@ -20,7 +20,9 @@ hybrid (script-based validation + browser verification for learning guide)
 
 ## Sprints
 
-### Sprint 0: Verification Harness
+### Sprint 0: Verification Harness — **SHIPPED**
+> **Built:** Added independent 3D validator, `InputSpec3D`, 3D prove runner, and refreshed the stale pipes fixture to the shipped socket-rule family.
+
 **Goal:** Define what "correct 3D output" means.
 
 - [x] Task 0.1: Create `harness/validate-3d.ts` with 3D adjacency checker `(1pt)`
@@ -35,8 +37,9 @@ hybrid (script-based validation + browser verification for learning guide)
   - Modify `harness/types.ts` to add `InputSpec3D` with `width`, `height`, `depth`, `tileset`, `periodic`, `seed`, and optional `limit`.
   - Reuse the existing `performance-test/inputs-3d/pipes-4.json`; normalize it only if needed for the new type. Do not recreate it.
 
-- [ ] Task 0.3: Create `harness/prove-harness-3d.ts` `(1pt)`
+- [x] Task 0.3: Create `harness/prove-harness-3d.ts` `(1pt)`
   - Load the committed 3D pipes fixture from `performance-test/tilesets-3d/pipes.json` and `performance-test/inputs-3d/pipes-4.json`.
+  - Note: refreshed `performance-test/tilesets-3d/pipes.json` from the stale 5-tile hand-authored fixture to the socket-generated pipe family already used by `viz3d`.
   - Run `WFCSolver3D`, validate with `validate3D(..., complete=true)`, check deterministic repeat with the same seed, and print a parseable `FINAL 3D HARNESS PASS/FAIL` line.
 
 **Verification:** `bun run harness/validate-3d.ts` and `bun run harness/prove-harness-3d.ts` can validate 3D results.
