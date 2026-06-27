@@ -34,8 +34,10 @@ hybrid: unit tests for sockets, API smoke for solve success, and browser verific
   - Red signal: `test/smoke-solve-3d-instant-rich.ts` reports only `empty`, `pipe-X`, `pipe-Y`, and `pipe-Z` are registered, pinpointing missing rich pipes.
 **Verification:** Red tests identify missing rich pipes, not unrelated solver failures.
 
-### Sprint 1: Rich socket tileset in server
-- [ ] Task 1.1: Replace `buildPipeTiles()` in `viz3d/server.ts:45` with a rich socket family `(2pt)`:
+### Sprint 1: Rich socket tileset in server — **SHIPPED**
+> **Built:** Replaced straights-only Pipes with a 37-tile rich socket family and enabled opt-in backtracking on both visualizer solve routes.
+
+- [x] Task 1.1: Replace `buildPipeTiles()` in `viz3d/server.ts:45` with a rich socket family `(2pt)`:
 
 ```ts
 function buildPipeTiles(): PipeTile[] {
@@ -53,9 +55,9 @@ function buildPipeTiles(): PipeTile[] {
 
   - Exact tile names must include prefixes `elbow-`, `tee-`, and `junction-6` so tests can detect them.
   - DO NOT add cap tiles in this phase; caps reintroduce dead-end stubs and make the visual less clear.
-- [ ] Task 1.2: Keep `buildRulesFromTiles()` at `viz3d/server.ts:54` as the only rule generator `(1pt)`.
+- [x] Task 1.2: Keep `buildRulesFromTiles()` at `viz3d/server.ts:54` as the only rule generator `(1pt)`.
   - DO NOT hand-author adjacency arrays; socket generation prevents asymmetry bugs.
-- [ ] Task 1.3: Instantiate the solver in `viz3d/server.ts:141` and instant route with opt-in backtracking `(1pt)`:
+- [x] Task 1.3: Instantiate the solver in `viz3d/server.ts:141` and instant route with opt-in backtracking `(1pt)`:
 
 ```ts
 search: { strategy: 'backtrack', maxBacktracks: 4096, maxDepth: 256 },

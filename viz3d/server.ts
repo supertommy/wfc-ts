@@ -35,20 +35,55 @@ function faces(...f: number[]): number[] {
 const PIPE_X_COLOR = 0xff5a6e; // red   — runs along X (left↔right)
 const PIPE_Y_COLOR = 0x4ade80; // green — runs along Y (up↔down)
 const PIPE_Z_COLOR = 0x49c5ff; // blue  — runs along Z (front↔back)
+const PIPE_ELBOW_COLOR = 0xf59e0b; // amber — turns
+const PIPE_TEE_COLOR = 0xa78bfa; // violet — branches
+const PIPE_JUNCTION_COLOR = 0xf8fafc; // white — six-way junction
 const EMPTY_COLOR = 0x333355;
 
-// Straights-only socket family. Each pipe tile opens on one axis' two
-// opposite faces, so an interior pipe forces the SAME pipe on both ends —
-// continuous lines that span the volume edge-to-edge, never a stub dying
-// into empty. This family is 100% solvable on this restart-only engine
-// (richer caps/elbows/tees need backtracking the engine doesn't have).
+const FACE_NAMES = ["left", "right", "up", "down", "front", "back"];
+
+// Rich socket family: empty, straights, elbows, tees, and a six-way junction.
+// No caps: a pipe opening always requires a matching neighbour opening.
 function buildPipeTiles(): PipeTile[] {
-  return [
-    { name: "empty", open: faces(), weight: 1, color: EMPTY_COLOR },
-    { name: "pipe-X", open: faces(0, 1), weight: 2, color: PIPE_X_COLOR },
-    { name: "pipe-Y", open: faces(2, 3), weight: 2, color: PIPE_Y_COLOR },
-    { name: "pipe-Z", open: faces(4, 5), weight: 2, color: PIPE_Z_COLOR },
-  ];
+  const tiles: PipeTile[] = [];
+  tiles.push({ name: "empty", open: faces(), weight: 1.2, color: EMPTY_COLOR });
+  tiles.push({ name: "straight-X", open: faces(0, 1), weight: 1.4, color: PIPE_X_COLOR });
+  tiles.push({ name: "straight-Y", open: faces(2, 3), weight: 1.4, color: PIPE_Y_COLOR });
+  tiles.push({ name: "straight-Z", open: faces(4, 5), weight: 1.4, color: PIPE_Z_COLOR });
+
+  for (let a = 0; a < 6; a++) {
+    for (let b = a + 1; b < 6; b++) {
+      if (OPP[a] === b) continue;
+      tiles.push({
+        name: `elbow-${FACE_NAMES[a]}-${FACE_NAMES[b]}`,
+        open: faces(a, b),
+        weight: 0.9,
+        color: PIPE_ELBOW_COLOR,
+      });
+    }
+  }
+
+  for (let a = 0; a < 6; a++) {
+    for (let b = a + 1; b < 6; b++) {
+      for (let c = b + 1; c < 6; c++) {
+        tiles.push({
+          name: `tee-${FACE_NAMES[a]}-${FACE_NAMES[b]}-${FACE_NAMES[c]}`,
+          open: faces(a, b, c),
+          weight: 0.65,
+          color: PIPE_TEE_COLOR,
+        });
+      }
+    }
+  }
+
+  tiles.push({
+    name: "junction-6",
+    open: faces(0, 1, 2, 3, 4, 5),
+    weight: 0.35,
+    color: PIPE_JUNCTION_COLOR,
+  });
+
+  return tiles;
 }
 
 function buildRulesFromTiles(tiles: PipeTile[]): TileRule3D[] {
@@ -76,9 +111,12 @@ const PIPES_NAMES = PIPE_TILES.map((t) => t.name);
 const PIPES_SOCKETS = PIPE_TILES.map((t) => t.open);
 const PIPES_LEGEND = [
   { name: "empty", color: EMPTY_COLOR },
-  { name: "pipe-X (red)", color: PIPE_X_COLOR },
-  { name: "pipe-Y (green)", color: PIPE_Y_COLOR },
-  { name: "pipe-Z (blue)", color: PIPE_Z_COLOR },
+  { name: "straight-X (red)", color: PIPE_X_COLOR },
+  { name: "straight-Y (green)", color: PIPE_Y_COLOR },
+  { name: "straight-Z (blue)", color: PIPE_Z_COLOR },
+  { name: "elbows (amber)", color: PIPE_ELBOW_COLOR },
+  { name: "tees (violet)", color: PIPE_TEE_COLOR },
+  { name: "junction-6 (white)", color: PIPE_JUNCTION_COLOR },
 ];
 
 interface TilesetConfig {
@@ -146,6 +184,7 @@ const server = Bun.serve({
         weights: ts.weights,
         rules: ts.rules,
         heuristic: "mrv",
+        search: { strategy: "backtrack", maxBacktracks: 4096, maxDepth: 256 },
       });
 
       const encoder = new TextEncoder();
@@ -244,6 +283,7 @@ const server = Bun.serve({
         weights: ts.weights,
         rules: ts.rules,
         heuristic: "mrv",
+        search: { strategy: "backtrack", maxBacktracks: 4096, maxDepth: 256 },
       });
 
       const startTime = performance.now();

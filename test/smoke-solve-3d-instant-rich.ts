@@ -25,7 +25,7 @@ async function main() {
   try {
     const tsRes = await fetch(`${SERVER}/api/tilesets`, { signal: AbortSignal.timeout(2500) });
     assert(tsRes.ok, `tilesets HTTP ${tsRes.status}`);
-    tilesets = await tsRes.json();
+    tilesets = (await tsRes.json()) as Record<string, { name?: string; tiles?: string[]; }>;
   } catch (err: any) {
     console.error("FAIL: could not fetch /api/tilesets");
     console.error("  This indicates the visualizer server is not running or /api not serving rich pipes yet.");
