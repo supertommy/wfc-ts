@@ -143,7 +143,9 @@ hybrid (script-based validation + browser verification for learning guide)
 
 **Demo:** README and docs readable, examples copy-paste correctly.
 
-### Sprint 2: Learning Guide
+### Sprint 2: Learning Guide — **SHIPPED**
+> **Built:** Added an interactive 3D neighborhood guide with a React direction explorer and linked it from the learning index.
+
 **Goal:** Create interactive learning guide for 3D WFC.
 
 - [x] Task 2.1: Create `docs/learning/3d-wfc.mdx` `(2pt)`
@@ -222,14 +224,14 @@ hybrid (script-based validation + browser verification for learning guide)
   - Experiment with your own tilesets
   ```
 
-- [ ] Task 2.2: Add entry to `docs/learning/index.mdx` `(0pt)`
+- [x] Task 2.2: Add entry to `docs/learning/index.mdx` `(0pt)`
   ```mdx
   | [3D WFC](./3d-wfc.mdx) | Extending WFC to 3D voxel grids |
   ```
 
 **Demo:**
 ```bash
-bun test test/learning-guide-check.ts
+bun test ./test/learning-guide-check.ts
 # For browser review, run the existing make-pages-interactive workflow for docs/learning/.
 ```
 
