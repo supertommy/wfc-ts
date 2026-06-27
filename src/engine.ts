@@ -197,16 +197,18 @@ export class WFCEngine {
     const PropCompatOffsetCtor = TD < 256 ? Uint8Array : TD < 65536 ? Uint16Array : Int32Array;
     this.propCompatOffset = new PropCompatOffsetCtor(propTotal);
     
-    // Fill propCompatOffset: for each entry, compute t2 * D + d
-    let offset = 0;
+    // Fill propCompatOffset: when tile t is banned at cell i, decrement the
+    // compatible count for each supported tile in the neighboring cell's
+    // opposite-facing direction.
     for (let d = 0; d < D; d++) {
+      const oppositeD = topology.opposite(d);
       for (let t = 0; t < T; t++) {
         const key = d * T + t;
         const start = propStart[key];
         const len = propLen[key];
         for (let l = 0; l < len; l++) {
           const t2 = propData[start + l];
-          this.propCompatOffset[start + l] = t2 * D + d;
+          this.propCompatOffset[start + l] = t2 * D + oppositeD;
         }
       }
     }
@@ -330,9 +332,21 @@ export class WFCEngine {
       this.hasFixpoint = true;
     }
 
-    // Reset stack and heap
+    // Reset stack, checkpoints, and heap
     this.stacksize = 0;
     this.observedSoFar = 0;
+    this.checkpointWave.length = 0;
+    this.checkpointCompatible.length = 0;
+    this.checkpointSumsOfOnes.length = 0;
+    this.checkpointObserved.length = 0;
+    this.checkpointSumsOfWeights.length = 0;
+    this.checkpointSumsOfWeightLogWeights.length = 0;
+    this.checkpointEntropies.length = 0;
+    this.checkpointObservedSoFar.length = 0;
+    this.checkpointNodes.length = 0;
+    this.checkpointChoices.length = 0;
+    this.checkpointNextChoice.length = 0;
+    this.backtrackCount = 0;
     this.heapGen++;
     this.dirtyCount = 0;
 
@@ -415,6 +429,62 @@ export class WFCEngine {
     }
   }
 
+  private chooseTileOrder(node: number, random: Random): number[] {
+    const dist = this.computeDistribution(node);
+    const first = weightedPick(dist, random.nextDouble());
+    const choices = [first];
+    const base = node * this.T;
+
+    for (let t = 0; t < this.T; t++) {
+      if (t !== first && this.wave[base + t]) choices.push(t);
+    }
+
+    if (choices.length > 2) {
+      const rest = choices.slice(1).sort((a, b) => {
+        const delta = dist[b] - dist[a];
+        return delta !== 0 ? delta : a - b;
+      });
+      choices.splice(1, choices.length - 1, ...rest);
+    }
+
+    return choices;
+  }
+
+  private backtrackAndRetry(random: Random): boolean {
+    void random;
+
+    while (this.checkpointWave.length > 0 && this.backtrackCount < this.maxBacktracks) {
+      const depth = this.checkpointWave.length - 1;
+      const choices = this.checkpointChoices[depth];
+      const nextChoice = this.checkpointNextChoice[depth];
+
+      if (nextChoice >= choices.length) {
+        this.checkpointWave.pop();
+        this.checkpointCompatible.pop();
+        this.checkpointSumsOfOnes.pop();
+        this.checkpointObserved.pop();
+        this.checkpointSumsOfWeights.pop();
+        this.checkpointSumsOfWeightLogWeights.pop();
+        this.checkpointEntropies.pop();
+        this.checkpointObservedSoFar.pop();
+        this.checkpointNodes.pop();
+        this.checkpointChoices.pop();
+        this.checkpointNextChoice.pop();
+        continue;
+      }
+
+      this.restoreCheckpoint(depth);
+      this.backtrackCount++;
+      this.checkpointNextChoice[depth] = nextChoice + 1;
+
+      const node = this.checkpointNodes[depth];
+      const chosenTile = choices[nextChoice];
+      if (this.applyChoice(node, chosenTile) && this.propagate()) return true;
+    }
+
+    return false;
+  }
+
   /**
    * Run the solver to completion.
    * @param seed - Random seed for determinism
@@ -433,8 +503,16 @@ export class WFCEngine {
       for (let l = 0; limitNeg || l < limit; l++) {
         const node = this.nextUnobservedNode(random);
         if (node >= 0) {
-          this.observe(node, random);
-          const success = this.propagate();
+          let success: boolean;
+          if (this.searchStrategy === 'backtrack') {
+            const choices = this.chooseTileOrder(node, random);
+            this.saveCheckpoint(node, choices);
+            success = this.applyChoice(node, choices[0]) && this.propagate();
+            if (!success) success = this.backtrackAndRetry(random);
+          } else {
+            this.observe(node, random);
+            success = this.propagate();
+          }
           if (!success) {
             contradicted = true;
             break;
@@ -476,19 +554,28 @@ export class WFCEngine {
       for (let l = 0; limitNeg || l < limit; l++) {
         const node = this.nextUnobservedNode(random);
         if (node >= 0) {
-          this.observe(node, random);
-          const success = this.propagate();
+          let success: boolean;
+          if (this.searchStrategy === 'backtrack') {
+            const choices = this.chooseTileOrder(node, random);
+            this.saveCheckpoint(node, choices);
+            success = this.applyChoice(node, choices[0]) && this.propagate();
+            if (!success) success = this.backtrackAndRetry(random);
+          } else {
+            this.observe(node, random);
+            success = this.propagate();
+          }
           totalObserves++;
 
           const cellsResolved = this.countResolved();
+          const backtrackStatus = this.searchStrategy === 'backtrack' ? { backtracks: this.backtrackCount } : {};
 
           if (signal && signal.aborted) {
-            yield { done: true, ok: false, complete: false, attempt, cellsResolved, observedCell: node };
+            yield { done: true, ok: false, complete: false, attempt, cellsResolved, observedCell: node, ...backtrackStatus };
             return;
           }
 
           if (yieldEvery > 0 && totalObserves % yieldEvery === 0) {
-            yield { done: false, observedCell: node, attempt, cellsResolved };
+            yield { done: false, observedCell: node, attempt, cellsResolved, ...backtrackStatus };
           }
 
           if (!success) {
@@ -498,23 +585,27 @@ export class WFCEngine {
         } else {
           // Success!
           this.finalizeObserved();
-          yield { done: true, ok: true, complete: true, attempt, cellsResolved: this.count };
+          const backtrackStatus = this.searchStrategy === 'backtrack' ? { backtracks: this.backtrackCount } : {};
+          yield { done: true, ok: true, complete: true, attempt, cellsResolved: this.count, ...backtrackStatus };
           return;
         }
       }
       if (!contradicted) {
         const cellsResolved = this.countResolved();
         const complete = this.isComplete();
-        yield { done: true, ok: true, complete, attempt, cellsResolved };
+        const backtrackStatus = this.searchStrategy === 'backtrack' ? { backtracks: this.backtrackCount } : {};
+        yield { done: true, ok: true, complete, attempt, cellsResolved, ...backtrackStatus };
         return;
       }
       // Contradiction: continue to next attempt
       if (signal && signal.aborted) {
-        yield { done: true, ok: false, complete: false, attempt, cellsResolved: this.countResolved() };
+        const backtrackStatus = this.searchStrategy === 'backtrack' ? { backtracks: this.backtrackCount } : {};
+        yield { done: true, ok: false, complete: false, attempt, cellsResolved: this.countResolved(), ...backtrackStatus };
         return;
       }
     }
-    yield { done: true, ok: false, complete: false, attempt: restartBudget, cellsResolved: this.countResolved() };
+    const backtrackStatus = this.searchStrategy === 'backtrack' ? { backtracks: this.backtrackCount } : {};
+    yield { done: true, ok: false, complete: false, attempt: restartBudget, cellsResolved: this.countResolved(), ...backtrackStatus };
   }
 
   /**

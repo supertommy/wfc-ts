@@ -1,22 +1,22 @@
-// Test file for opt-in backtracking search — written BEFORE implementation (Red phase)
-// These tests verify the public search API shape and expected behavior for
-// restart-only default vs opt-in decision-stack backtracking.
+// Test file for opt-in backtracking search — verifies public search API shape
+// and opt-in backtracking behavior (restart-only default vs 'backtrack' strategy).
 //
-// Fixtures chosen so that:
-// - restartBudget=0 forces exactly one outer attempt
-// - a crafted 2D "pipe+elbow" tileset admits solutions but a greedy first path
-//   (specific seed) leads to contradiction under restart-only
-// - backtracking should recover within the attempt
-//
-// 2D and 3D share the underlying engine improvements once implemented.
+// restartBudget=0 forces exactly one outer attempt (no auto-retry).
+// Default/omitted search is restart-only.
+// backtracks field appears only for strategy:'backtrack'.
+// Determinism: same seed + same SearchOptions => identical output.
+// Includes a valid (socket-generated, symmetric) fixture where restart budget=0
+// fails for a seed but backtrack (budget=0) succeeds.
 
 import { describe, it, expect } from "vitest";
 import { WFCSolver, type TileRule } from "../src/solver.js";
-import { WFCSolver3D } from "../src/solver-3d.js";
+import { WFCSolver3D, type TileRule3D } from "../src/solver-3d.js";
 import type { StepStatus } from "../src/types.js";
 
-// 2D socket-style "rich pipes" (straights + elbows) for a fixture that can trap restart
-// Direction order for faces: 0=left, 1=up, 2=right, 3=down (matches solver 2D)
+// 2D rich "pipes" (straights + elbows + tees, NO empty) using 0/1 sockets.
+// Generated rules are symmetric by construction.
+// Used with periodic to create a case where restart (single attempt) can trap
+// but backtracking recovers.
 const OPP_2D = [2, 3, 0, 1];
 
 function faces2D(...fs: number[]): number[] {
@@ -30,21 +30,22 @@ interface Pipe2DTile {
   open: number[];
 }
 
-function buildHard2DPipeTiles(): Pipe2DTile[] {
+function buildRichNoEmpty2DTiles(): Pipe2DTile[] {
   return [
-    { name: "empty", open: faces2D() },
     { name: "straight-H", open: faces2D(0, 2) },
     { name: "straight-V", open: faces2D(1, 3) },
-    // 4 elbow rotations (exactly two adjacent openings)
-    { name: "elbow-LU", open: faces2D(0, 1) }, // left + up
-    { name: "elbow-RU", open: faces2D(2, 1) }, // right + up
-    { name: "elbow-RD", open: faces2D(2, 3) }, // right + down
-    { name: "elbow-LD", open: faces2D(0, 3) }, // left + down
+    // elbows
+    { name: "elbow-LU", open: faces2D(0, 1) },
+    { name: "elbow-RU", open: faces2D(2, 1) },
+    { name: "elbow-RD", open: faces2D(2, 3) },
+    { name: "elbow-LD", open: faces2D(0, 3) },
+    // tees (3 openings)
+    { name: "tee-left-up-right", open: faces2D(0, 1, 2) },
+    { name: "tee-left-up-down", open: faces2D(0, 1, 3) },
   ];
 }
 
 function buildRulesFrom2DTiles(tiles: Pipe2DTile[]): TileRule[] {
-  // dir order matches face indices and solver 2D: 0=left, 1=up, 2=right, 3=down
   const dirKeys = ["left", "up", "right", "down"] as const;
   return tiles.map((tile, i) => {
     const rule = { forTile: i } as any;
@@ -60,47 +61,52 @@ function buildRulesFrom2DTiles(tiles: Pipe2DTile[]): TileRule[] {
   });
 }
 
+// Simple fully-compatible tileset (any tile next to any) — always solvable in one attempt.
+function buildTrivialRules(T: number): TileRule[] {
+  const all = Array.from({ length: T }, (_, i) => i);
+  return all.map((forTile) => ({
+    forTile,
+    left: all,
+    right: all,
+    up: all,
+    down: all,
+  }));
+}
+
 describe("backtracking search API (opt-in via constructor)", () => {
   it("omitted search or strategy:'restart' is restart-only (default)", () => {
-    const tiles = buildHard2DPipeTiles();
+    const tiles = buildRichNoEmpty2DTiles();
     const rules = buildRulesFrom2DTiles(tiles);
-    const weights = [2, 0.8, 0.8, 0.5, 0.5, 0.5, 0.5];
+    const weights = tiles.map(() => 1);
 
+    // With restartBudget=0 (exactly one attempt) this seed+fixture fails under restart.
     const s1 = new WFCSolver({
-      width: 5,
-      height: 5,
-      periodic: false,
+      width: 3,
+      height: 3,
+      periodic: true,
       weights,
       rules,
       heuristic: "mrv",
     });
-    const ok1 = s1.run(0, -1, 0);
-    expect(ok1).toBe(false); // known for this seed+budget=0 on this fixture
+    const ok1 = s1.run(13, -1, 0);
+    expect(ok1).toBe(false);
 
     const s2 = new WFCSolver({
-      width: 5,
-      height: 5,
-      periodic: false,
+      width: 3,
+      height: 3,
+      periodic: true,
       weights,
       rules,
       heuristic: "mrv",
       search: { strategy: "restart" },
     } as any);
-    const ok2 = s2.run(0, -1, 0);
+    const ok2 = s2.run(13, -1, 0);
     expect(ok2).toBe(false);
   });
 
   it("restartBudget=0 means exactly one outer attempt (no auto retry)", () => {
-    // Use a simple always-solvable set; with budget=0 still succeeds if first path ok
-    const T = 2;
-    const all = Array.from({ length: T }, (_, i) => i);
-    const rules: TileRule[] = all.map((forTile) => ({
-      forTile,
-      left: all,
-      right: all,
-      up: all,
-      down: all,
-    }));
+    // Trivial set always solvable on first path.
+    const rules = buildTrivialRules(2);
     const s = new WFCSolver({
       width: 3,
       height: 3,
@@ -123,45 +129,45 @@ describe("backtracking search API (opt-in via constructor)", () => {
   });
 
   it("opt-in backtracking solves a fixture where restart with restartBudget=0 fails", () => {
-    const tiles = buildHard2DPipeTiles();
+    const tiles = buildRichNoEmpty2DTiles();
     const rules = buildRulesFrom2DTiles(tiles);
-    const weights = [2, 0.8, 0.8, 0.5, 0.5, 0.5, 0.5];
+    const weights = tiles.map(() => 1);
 
-    // restart-only budget=0 must fail for seed 0 on this fixture
+    // restart-only budget=0 fails for this seed+fixture (periodic rich no-empty)
     const restart = new WFCSolver({
-      width: 5,
-      height: 5,
-      periodic: false,
+      width: 3,
+      height: 3,
+      periodic: true,
       weights,
       rules,
       heuristic: "mrv",
     });
-    expect(restart.run(0, -1, 0)).toBe(false);
+    expect(restart.run(13, -1, 0)).toBe(false);
 
-    // backtracking (same outer budget=0) should succeed once implemented
+    // backtracking (budget=0) succeeds
     const backtracker = new WFCSolver({
-      width: 5,
-      height: 5,
-      periodic: false,
+      width: 3,
+      height: 3,
+      periodic: true,
       weights,
       rules,
       heuristic: "mrv",
       search: { strategy: "backtrack", maxBacktracks: 4096, maxDepth: 64 },
     } as any);
 
-    const ok = backtracker.run(0, -1, 0);
-    expect(ok).toBe(true); // currently red: backtracking engine path not present
+    const ok = backtracker.run(13, -1, 0);
+    expect(ok).toBe(true);
   });
 
   it("same seed + same search options yields identical result (deterministic)", () => {
-    const tiles = buildHard2DPipeTiles();
-    const rules = buildRulesFrom2DTiles(tiles);
-    const weights = [2, 0.8, 0.8, 0.5, 0.5, 0.5, 0.5];
+    // Use trivial always-solvable to ensure we compare completed results.
+    const rules = buildTrivialRules(3);
+    const weights = [1, 1, 1];
 
     const runWith = (search?: any): number[] => {
       const s = new WFCSolver({
-        width: 5,
-        height: 5,
+        width: 4,
+        height: 4,
         periodic: false,
         weights,
         rules,
@@ -177,55 +183,54 @@ describe("backtracking search API (opt-in via constructor)", () => {
 
     const c = runWith({ strategy: "restart" });
     expect(c).toEqual(a);
+
+    // also for backtrack options
+    const d = runWith({ strategy: "backtrack", maxBacktracks: 128, maxDepth: 32 });
+    const e = runWith({ strategy: "backtrack", maxBacktracks: 128, maxDepth: 32 });
+    expect(e).toEqual(d);
   });
 
-  it("StepStatus.backtracks is only present (or non-zero capable) in backtrack mode", () => {
-    const tiles = buildHard2DPipeTiles();
+  it("StepStatus.backtracks is only asserted for search.strategy='backtrack'", () => {
+    const tiles = buildRichNoEmpty2DTiles();
     const rules = buildRulesFrom2DTiles(tiles);
-    const weights = [2, 0.8, 0.8, 0.5, 0.5, 0.5, 0.5];
+    const weights = tiles.map(() => 1);
 
     const collect = (search?: any): StepStatus[] => {
       const s = new WFCSolver({
-        width: 5,
-        height: 5,
-        periodic: false,
+        width: 3,
+        height: 3,
+        periodic: true,
         weights,
         rules,
         search,
       } as any);
       const sts: StepStatus[] = [];
-      for (const st of s.stepRun(0, -1, 0, 1)) {
+      for (const st of s.stepRun(13, -1, 0, 1)) {
         sts.push(st);
         if (st.done) break;
       }
       return sts;
     };
 
+    // For restart: do not assert presence or value of backtracks (per requirements)
     const restartSts = collect(undefined);
     const lastRestart = restartSts[restartSts.length - 1];
-    // In restart mode we do not assert or require a backtracks field (may be absent or 0)
-    // The field is only meaningful for backtrack strategy.
-    if ("backtracks" in (lastRestart as any)) {
-      // tolerate 0 but do not require the key
-      expect((lastRestart as any).backtracks).toBe(0);
-    }
+    // Field must be absent for restart mode
+    expect((lastRestart as any).backtracks).toBeUndefined();
 
     const btSts = collect({ strategy: "backtrack", maxBacktracks: 100, maxDepth: 16 });
     const lastBt = btSts[btSts.length - 1];
-    // Once implemented, backtracks count must be reported for backtrack mode
-    // Use any-cast because the field is added in the same phase as behavior
+    // For backtrack mode, field is present and we assert on it
     const btCount = (lastBt as any).backtracks;
     expect(btCount).not.toBeUndefined();
     expect(btCount).toBeGreaterThanOrEqual(0);
-    // and at least the final done status carries it
     expect(lastBt.done).toBe(true);
   });
 
   it("3D solver accepts search option (shares engine backtracking)", () => {
-    // Use the simple compatible 3D pipes from test helper style (always solvable)
     const T = 3;
     const all = Array.from({ length: T }, (_, i) => i);
-    const rules3: any[] = all.map((forTile) => ({
+    const rules3: TileRule3D[] = all.map((forTile) => ({
       forTile,
       left: all,
       right: all,

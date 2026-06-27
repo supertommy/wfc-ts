@@ -90,21 +90,24 @@ private backtrackCount = 0;
   - DO NOT snapshot heap internals.
 **Demo:** `bun run typecheck` succeeds.
 
-### Sprint 3: Backtracking control flow in run and stepRun
-- [ ] Task 3.1: Add `private chooseTileOrder(node: number, random: Random): number[]` `(1pt)`.
+### Sprint 3: Backtracking control flow in run and stepRun — **SHIPPED**
+> **Built:** Wired bounded opt-in backtracking into `run()`/`stepRun()`, surfaced `StepStatus.backtracks`, fixed the discovered opposite-direction compatibility decrement bug, and recalibrated red tests through the arbiter.
+
+- [x] Task 3.1: Add `private chooseTileOrder(node: number, random: Random): number[]` `(1pt)`.
   - First element must be the same tile `weightedPick(this.distribution, random.nextDouble())` would choose.
   - Remaining elements must be all other currently-possible tiles sorted by descending distribution score, tie-breaking by lower tile index.
   - This preserves current first-choice behavior and gives deterministic fallback choices.
-- [ ] Task 3.2: Implement `private backtrackAndRetry(random: Random): boolean` `(2pt)`.
+- [x] Task 3.2: Implement `private backtrackAndRetry(random: Random): boolean` `(2pt)`.
   - Pop exhausted checkpoints until one has a remaining choice.
   - Restore that checkpoint.
   - Apply the next choice with `applyChoice(node, chosenTile)` and then `propagate()`.
   - Increment `backtrackCount` each time a checkpoint restore is attempted.
   - Return `false` if no checkpoint can produce a valid next choice.
-- [ ] Task 3.3: Modify `run()` at `src/engine.ts:342` so only `searchStrategy === 'backtrack'` saves checkpoints and calls `backtrackAndRetry` on contradiction `(2pt)`.
+- [x] Task 3.3: Modify `run()` at `src/engine.ts:342` so only `searchStrategy === 'backtrack'` saves checkpoints and calls `backtrackAndRetry` on contradiction `(2pt)`.
+  - Deviation: while validating strict 3D sockets, propagation was found decrementing neighbor compatibility in the wrong facing direction; fixed `propCompatOffset` to use `topology.opposite(d)` so solved grids validate.
   - Restart mode must keep the old contradiction branch: `contradicted = true; break;`.
   - Stop backtracking when `backtrackCount >= maxBacktracks` and fall through to outer restart.
-- [ ] Task 3.4: Modify `stepRun()` at `src/engine.ts:386` with the same behavior and include `backtracks: this.backtrackCount` in yielded statuses `(1pt)`.
+- [x] Task 3.4: Modify `stepRun()` at `src/engine.ts:386` with the same behavior and include `backtracks: this.backtrackCount` in yielded statuses `(1pt)`.
   - DO NOT change `attempt`; it still means outer restart attempt.
 **Demo:** `bun test test/backtracking.test.ts test/solver-3d.test.ts` passes.
 
