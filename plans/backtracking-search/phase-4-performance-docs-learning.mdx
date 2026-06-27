@@ -69,12 +69,14 @@ script-based ratchet + docs/browser review. The goal is to preserve default spee
 - [x] Task 2.3: Re-run `bun run performance-test/backtracking-ratchet.ts` and record before/after numbers in the commit message `(1pt)`.
 **Demo:** `bun run ratchet:backtracking` passes; default restart path stays within threshold.
 
-### Sprint 3: Public docs and visualizer docs
-- [ ] Task 3.1: Update `README.md` API docs to include `SearchOptions` and an opt-in example `(1pt)`.
+### Sprint 3: Public docs and visualizer docs — **SHIPPED**
+> **Built:** Documented `SearchOptions`, the opt-in backtracking example, and the restart-only default caveat in `README.md`. Rewrote `viz3d/README.md` around rich socket pipes, turns, branches, and the local-vs-global connectivity boundary. Promoted the docs smoke script to a real gate.
+
+- [x] Task 3.1: Update `README.md` API docs to include `SearchOptions` and an opt-in example `(1pt)`.
   - Must explicitly say: default is restart-only; backtracking can improve success on hard tilesets but is slower.
-- [ ] Task 3.2: Update `viz3d/README.md` to explain rich socket pipes, turns, branches, and what local connectivity guarantees `(1pt)`.
+- [x] Task 3.2: Update `viz3d/README.md` to explain rich socket pipes, turns, branches, and what local connectivity guarantees `(1pt)`.
   - Must explicitly say local sockets do not guarantee one global connected component.
-**Demo:** `grep -n "restart-only" README.md viz3d/README.md` shows the default-performance caveat.
+**Demo:** `grep -n "restart-only" README.md viz3d/README.md`, `grep -n "search: { strategy: 'backtrack' }" README.md viz3d/README.md`, and `bun test/docs-smoke.ts` pass.
 
 ### Sprint 4: Interactive learning guide
 - [ ] Task 4.1: Create `docs/learning/backtracking-wfc.mdx` `(1pt)`.

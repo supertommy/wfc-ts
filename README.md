@@ -100,13 +100,22 @@ interface TileRule {
   down: number[];       // Tiles that can be below
 }
 
+type SearchStrategy = 'restart' | 'backtrack';
+
+interface SearchOptions {
+  strategy?: SearchStrategy; // Default: 'restart'
+  maxBacktracks?: number;    // Default: 4096 when strategy='backtrack'
+  maxDepth?: number;         // Default: 256 when strategy='backtrack'
+}
+
 interface WFCSolverOptions {
   width: number;
   height: number;
-  periodic: boolean;              // Wrap edges?
-  weights: number[] | Float64Array; // Weight per tile (higher = more likely)
-  rules: TileRule[];              // Adjacency rules
-  heuristic?: 'mrv' | 'entropy';  // Selection heuristic (default: 'mrv')
+  periodic: boolean;                    // Wrap edges?
+  weights: number[] | Float64Array;     // Weight per tile (higher = more likely)
+  rules: TileRule[];                    // Adjacency rules
+  heuristic?: 'mrv' | 'entropy' | 'scanline'; // Selection heuristic (default: 'mrv')
+  search?: SearchOptions;               // Opt-in search mode
 }
 
 class WFCSolver {
@@ -138,8 +147,34 @@ interface StepStatus {
   attempt: number;        // Current restart attempt
   cellsResolved: number;  // Cells collapsed to one tile
   observedCell?: number;  // Cell just observed (on done:false)
+  backtracks?: number;    // Present when search.strategy is 'backtrack'
 }
 ```
+
+### Search strategy
+
+The restart-only default is still the default. That keeps the fast path fast.
+
+For harder tilesets, you can opt into bounded backtracking. It saves decision checkpoints inside a restart attempt. When propagation hits a contradiction, the solver restores the last checkpoint and tries the next tile instead of throwing away the whole attempt.
+
+```typescript
+const solver = new WFCSolver({
+  width,
+  height,
+  periodic: true,
+  weights,
+  rules,
+  search: { strategy: 'backtrack' },
+});
+
+if (solver.run(42, -1, 0)) {
+  console.log('Solved with backtracking');
+}
+```
+
+Use this when success matters more than raw speed. Backtracking can solve hard local-constraint sets that restart-only search misses, but it does extra bookkeeping and can be slower. Keep the default for normal 2D tilesets. Opt in for rich pipes, tight socket sets, and other cases where alternatives matter.
+
+`WFCSolver3D` accepts the same `search` option.
 
 ## Benchmarks
 

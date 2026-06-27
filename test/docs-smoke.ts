@@ -1,18 +1,9 @@
 #!/usr/bin/env bun
-// Documentation smoke check for Phase 4 Sprint 0/3 independent verification harness.
-// Verifies README.md will contain the documented search API examples after docs Sprint 3.
-//
-// Strings checked (after docs written):
-//   - `search: { strategy: 'backtrack' }`
-//   - `restart-only default`
-//
-// Behavior:
-// - If strings present: prints OK and exits 0.
-// - If strings missing: prints DIAGNOSTIC (not FAIL), notes that this is expected before Sprint 3 docs update.
-//   Usable post-update without code change. Never forces a pass before the docs land.
+// Documentation smoke check for the Phase 4 docs gate.
+// Verifies README.md documents the opt-in backtracking API and the restart-only default.
 //
 // Run: bun test/docs-smoke.ts
-// (Not auto-run by `bun test` — explicit harness script, like smoke-solve-3d-instant-rich.ts)
+// (Explicit harness script, like smoke-solve-3d-instant-rich.ts.)
 
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -34,9 +25,8 @@ function main() {
   try {
     content = readFileSync(readmePath, "utf8");
   } catch (e: any) {
-    console.error(`DIAGNOSTIC: could not read README.md: ${e.message}`);
-    console.log("DIAGNOSTIC: skipping (no hard gate).");
-    process.exit(0);
+    console.error(`FAIL: could not read README.md: ${e.message}`);
+    process.exit(1);
   }
 
   const missing: string[] = [];
@@ -52,13 +42,11 @@ function main() {
     process.exit(0);
   }
 
-  console.log("DIAGNOSTIC: README.md does not yet contain the expected post-Sprint-3 strings.");
+  console.error("FAIL: README.md is missing required search docs.");
   for (const m of missing) {
-    console.log("  MISSING: " + m);
+    console.error("  MISSING: " + m);
   }
-  console.log("This is expected before docs Sprint 3 update.");
-  console.log("The check is safe to run now and will become a real gate once strings are added (no code change needed).");
-  process.exit(0);
+  process.exit(1);
 }
 
 if (import.meta.main) {
