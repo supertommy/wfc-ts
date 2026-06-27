@@ -51,7 +51,7 @@ Add 3D support to wfc-ts with a new `WFCSolver3D` class operating on `width × h
 - Phase 1: Existing 2D harness (`bun run harness/prove-harness.ts`) must stay green after engine extraction
 - Phase 1: New 3D unit tests verify 3D solve, periodicity, thin slabs
 - Phase 2: Manual browser verification of Three.js visualizer
-- Phase 3: 3D validation harness (`harness/prove-harness-3d.ts`)
+- Phase 3: 3D validator (`harness/validate-3d.ts`) plus prove runner (`harness/prove-harness-3d.ts`)
 
 **Edge cases handled**
 - Thin grids (1×N×M, N×1×M, etc.) — topology handles self-neighbors
