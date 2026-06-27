@@ -162,7 +162,7 @@
         return new THREE.BoxGeometry(0.98, 0.98, 0.98);
       }
 
-      const parts = [new THREE.IcosahedronGeometry(0.3, 1)];
+      const parts = [new THREE.SphereGeometry(0.3, 16, 12)];
       for (const dir of openDirs) parts.push(makeSocketSegmentGeometry(dir));
       const merged = mergeGeometries(parts, false);
       for (const part of parts) part.dispose();
