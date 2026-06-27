@@ -530,7 +530,7 @@ export class WFCEngine {
     return -1;
   }
 
-  private observe(node: number, random: Random): void {
+  private computeDistribution(node: number): Float64Array {
     const { wave, distribution: dist, weights, T, D, neighbors, propStart, propLen, propData } = this;
     const base = node * T;
 
@@ -564,10 +564,23 @@ export class WFCEngine {
       dist[t] = weights[t] * f * f * f;
     }
 
-    const r = weightedPick(dist, random.nextDouble());
+    return dist;
+  }
+
+  private applyChoice(node: number, chosenTile: number): boolean {
+    const { wave, T } = this;
+    const base = node * T;
+
     for (let t = 0; t < T; t++) {
-      if (wave[base + t] !== (t === r ? 1 : 0)) this.ban(node, t);
+      if (wave[base + t] !== (t === chosenTile ? 1 : 0) && !this.ban(node, t)) return false;
     }
+    return true;
+  }
+
+  private observe(node: number, random: Random): void {
+    const dist = this.computeDistribution(node);
+    const r = weightedPick(dist, random.nextDouble());
+    this.applyChoice(node, r);
   }
 
   private propagate(): boolean {
