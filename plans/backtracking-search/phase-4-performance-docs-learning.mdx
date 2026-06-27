@@ -22,15 +22,17 @@ script-based ratchet + docs/browser review. The goal is to preserve default spee
 
 ## Sprints
 
-### Sprint 0: Verification Harness
+### Sprint 0: Verification Harness — **SHIPPED**
 **Goal:** Define the performance and docs checks before optimization.
 **Executor:** Test-writing sub-agent with context isolation.
 
-- [ ] Task 0.1: Create `performance-test/backtracking-ratchet.ts` that reports default restart speed, opt-in backtrack speed, success rate, and backtrack counts for fixed fixtures.
-- [ ] Task 0.2: Add a documentation smoke check that greps `README.md` for `search: { strategy: 'backtrack' }` and `restart-only default` after docs are written.
-- [ ] Task 0.3: Add a learning-guide build check once the guide files exist.
-- [ ] Task 0.4: Confirm the ratchet script runs and prints diagnostics before thresholds are enforced.
-**Verification:** The script emits diagnostics without pretending unmeasured thresholds are known.
+> **Built:** Added raw, no-threshold ratchet diagnostics plus explicit docs and learning-guide smoke scripts. Confirmed the ratchet emits measured default restart/backtrack speed, success rates, and backtrack counts without enforcing guessed thresholds.
+
+- [x] Task 0.1: Create `performance-test/backtracking-ratchet.ts` that reports default restart speed, opt-in backtrack speed, success rate, and backtrack counts for fixed fixtures.
+- [x] Task 0.2: Add a documentation smoke check that greps `README.md` for `search: { strategy: 'backtrack' }` and `restart-only default` after docs are written.
+- [x] Task 0.3: Add a learning-guide build check once the guide files exist.
+- [x] Task 0.4: Confirm the ratchet script runs and prints diagnostics before thresholds are enforced.
+**Verification:** `bun run performance-test/backtracking-ratchet.ts`, `bun test/docs-smoke.ts`, and `bun test/learning-guide-check.ts` all exit 0; docs/guide checks are diagnostic until their content lands.
 
 ### Sprint 1: Ratchet default restart speed and opt-in cost
 - [ ] Task 1.1: Implement `performance-test/backtracking-ratchet.ts` `(2pt)`.
