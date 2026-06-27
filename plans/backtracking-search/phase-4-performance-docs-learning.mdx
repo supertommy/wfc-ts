@@ -57,13 +57,17 @@ script-based ratchet + docs/browser review. The goal is to preserve default spee
 
 **Demo:** `bun run ratchet:backtracking` prints all scenarios and exits 0.
 
-### Sprint 2: Optimize measured bottlenecks only
-- [ ] Task 2.1: If full snapshots exceed the accepted opt-in budget, preallocate checkpoint buffers up to `maxDepth` instead of allocating arrays on every checkpoint `(2pt)`.
+### Sprint 2: Optimize measured bottlenecks only — **SHIPPED / NO CODE CHANGE**
+> **Decision:** No optimization was warranted. The Sprint 1 ratchet stayed below all accepted budgets, and the fixed samples showed almost no snapshot restore pressure: 2D backtrack averaged `0.05` restores with max `1`; rich 3D 6³/8³ averaged `0` restores with max `0`. Preallocating checkpoint buffers or refactoring heap rebuilds now would be speculative.
+
+- [x] Task 2.1: If full snapshots exceed the accepted opt-in budget, preallocate checkpoint buffers up to `maxDepth` instead of allocating arrays on every checkpoint `(2pt)`.
   - DO NOT replace snapshot restore with a partial undo trail unless a measured bottleneck remains after preallocation.
-- [ ] Task 2.2: If heap rebuild dominates restore time, add a local `rebuildSelectionStructure()` helper shared by `clear()` and checkpoint restore to remove duplicate loops `(1pt)`.
+  - Not triggered by measurements.
+- [x] Task 2.2: If heap rebuild dominates restore time, add a local `rebuildSelectionStructure()` helper shared by `clear()` and checkpoint restore to remove duplicate loops `(1pt)`.
   - This is a cleanup only if it reduces duplicated code and preserves behavior.
-- [ ] Task 2.3: Re-run `bun run performance-test/backtracking-ratchet.ts` and record before/after numbers in the commit message `(1pt)`.
-**Demo:** Ratchet script passes and default restart path stays within threshold.
+  - Not triggered by measurements.
+- [x] Task 2.3: Re-run `bun run performance-test/backtracking-ratchet.ts` and record before/after numbers in the commit message `(1pt)`.
+**Demo:** `bun run ratchet:backtracking` passes; default restart path stays within threshold.
 
 ### Sprint 3: Public docs and visualizer docs
 - [ ] Task 3.1: Update `README.md` API docs to include `SearchOptions` and an opt-in example `(1pt)`.
