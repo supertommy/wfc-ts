@@ -14,6 +14,8 @@ export type {
   TileRule3D,
   StepStatus,
   Heuristic,
+  SearchStrategy,
+  SearchOptions,
   WFCSolverOptions,
   WFCSolver3DOptions,
 } from "./types.js";

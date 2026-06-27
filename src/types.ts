@@ -8,6 +8,17 @@
  */
 export type Heuristic = 'mrv' | 'entropy' | 'scanline';
 
+export type SearchStrategy = 'restart' | 'backtrack';
+
+export interface SearchOptions {
+  /** Default: 'restart'. 'backtrack' enables bounded decision-stack search inside each restart attempt. */
+  strategy?: SearchStrategy;
+  /** Maximum checkpoint restores per outer restart attempt. Default: 4096 when strategy='backtrack'. */
+  maxBacktracks?: number;
+  /** Maximum decision checkpoints retained at once. Default: 256 when strategy='backtrack'. */
+  maxDepth?: number;
+}
+
 /**
  * Adjacency rule for a single tile in 2D.
  * Lists which tiles can be adjacent in each direction.
@@ -47,6 +58,7 @@ export interface StepStatus {
   cellsResolved: number;
   ok?: boolean;
   complete?: boolean;
+  backtracks?: number;
 }
 
 /**
@@ -65,6 +77,9 @@ export interface WFCSolverOptions {
   
   /** Selection heuristic. Default: 'mrv' (fastest). */
   heuristic?: Heuristic;
+  
+  /** Search strategy. Default: restart-only. */
+  search?: SearchOptions;
 }
 
 /**
@@ -84,4 +99,7 @@ export interface WFCSolver3DOptions {
   
   /** Selection heuristic. Default: 'mrv' (fastest). */
   heuristic?: Heuristic;
+  
+  /** Search strategy. Default: restart-only. */
+  search?: SearchOptions;
 }

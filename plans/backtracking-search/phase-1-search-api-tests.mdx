@@ -34,10 +34,12 @@ unit-tests + build-type-check. This phase defines the surface and red tests with
 - [x] Task 0.4: Commit verification artifacts with the failing tests.
 **Verification:** New tests exist and fail for missing backtracking API/behavior. Existing tests are not edited.
 
-### Sprint 1: Add additive search types
-- [ ] Task 1.0: Apply approved discovery correction by exporting `SearchStrategy` and `SearchOptions` from `src/index.ts` `(0pt)`.
+### Sprint 1: Add additive search types — **SHIPPED**
+> **Built:** Added the public search option types, optional solver `search` fields, optional `StepStatus.backtracks`, and the approved package-root type exports.
+
+- [x] Task 1.0: Apply approved discovery correction by exporting `SearchStrategy` and `SearchOptions` from `src/index.ts` `(0pt)`.
   - The original plan missed the package-root public API barrel.
-- [ ] Task 1.1: Modify `src/types.ts` to add these exported types after `Heuristic` `(1pt)`:
+- [x] Task 1.1: Modify `src/types.ts` to add these exported types after `Heuristic` `(1pt)`:
 
 ```ts
 export type SearchStrategy = 'restart' | 'backtrack';
@@ -53,10 +55,10 @@ export interface SearchOptions {
 ```
 
   - DO NOT remove or rename `Heuristic`; existing imports must keep compiling.
-- [ ] Task 1.2: Add optional `search?: SearchOptions;` to both `WFCSolverOptions` and `WFCSolver3DOptions` in `src/types.ts` `(1pt)`.
+- [x] Task 1.2: Add optional `search?: SearchOptions;` to both `WFCSolverOptions` and `WFCSolver3DOptions` in `src/types.ts` `(1pt)`.
   - Exact placement: after `heuristic?: Heuristic;` in each interface.
   - DO NOT make `search` required.
-- [ ] Task 1.3: Add optional `backtracks?: number;` to `StepStatus` in `src/types.ts` `(1pt)`.
+- [x] Task 1.3: Add optional `backtracks?: number;` to `StepStatus` in `src/types.ts` `(1pt)`.
   - Existing consumers ignore unknown optional fields.
 **Demo:** `bun run typecheck` prints the `tsc --noEmit` command with no errors.
 
