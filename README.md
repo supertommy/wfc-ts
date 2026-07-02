@@ -16,10 +16,12 @@
 ## Installation
 
 ```bash
-npm install wfc-ts
+npm install github:supertommy/wfc-ts
 # or
-bun add wfc-ts
+bun add github:supertommy/wfc-ts
 ```
+
+> Not yet on the npm registry — install from GitHub for now.
 
 ## Quick Start
 
