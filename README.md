@@ -16,7 +16,8 @@
 ## Quick Start
 
 ```typescript
-import { WFCSolver } from 'wfc-ts';
+import { WFCSolver } from './src/index';
+// Once published: import { WFCSolver } from 'wfc-ts';
 
 // Define tiles: 0=grass, 1=coast, 2=water
 // Rule: grass can't touch water directly (needs coast)
@@ -56,7 +57,8 @@ The solver doesn't know what tiles look like — it just enforces adjacency rule
 ## Steppable API (for visualization)
 
 ```typescript
-import { WFCSolver } from 'wfc-ts';
+import { WFCSolver } from './src/index';
+// Once published: import { WFCSolver } from 'wfc-ts';
 
 const solver = new WFCSolver({ width: 16, height: 16, periodic: false, weights, rules });
 
@@ -172,7 +174,8 @@ Use this when success matters more than raw speed. Backtracking can solve hard l
 Use `WFCSolver3D` for voxel grids. Rules have six directions and results are flattened as `x + y * width + z * width * height`.
 
 ```typescript
-import { WFCSolver3D, type TileRule3D } from 'wfc-ts';
+import { WFCSolver3D, type TileRule3D } from './src/index';
+// Once published: import { WFCSolver3D, type TileRule3D } from 'wfc-ts';
 
 const rules: TileRule3D[] = [
   // 0 = empty, 1 = solid. This simple example allows either tile anywhere.
