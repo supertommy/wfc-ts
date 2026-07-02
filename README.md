@@ -13,16 +13,6 @@
 - **Zero dependencies**: Pure TypeScript, works in Node, Bun, and browsers
 - **Well-tested**: Proof harness with independent validation
 
-## Installation
-
-```bash
-npm install github:supertommy/wfc-ts
-# or
-bun add github:supertommy/wfc-ts
-```
-
-> Not yet on the npm registry — install from GitHub for now.
-
 ## Quick Start
 
 ```typescript
