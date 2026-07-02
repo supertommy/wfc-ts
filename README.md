@@ -8,7 +8,6 @@
 ## Features
 
 - **Fast**: 2.5–20x faster than comparable JS/TS implementations
-- **100% success rate**: Solves hard tilesets (Summer 48×48 periodic) that others fail on
 - **Deterministic**: Same seed → same output, every time
 - **Steppable**: Generator-based API for visualization and cancellation
 - **Zero dependencies**: Pure TypeScript, works in Node, Bun, and browsers
